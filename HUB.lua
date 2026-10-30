@@ -1,5 +1,5 @@
--- ZYON HUB v4 | Roblox Luau | Mobile
--- Enemy ESP, friend/team filter, always-on smooth aim, adjustable sensitivity
+-- ZYON HUB v5 | Roblox Luau | Mobile
+-- Conservative team/match recognition, auto aim, adjustable FOV and sensitivity
 
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
@@ -67,16 +67,135 @@ local function registerFriend(player)
         end
     end)
 end
-local function enemy(player)
-    if player == LP or player.Parent ~= Players then return false end
-    if settings.IgnoreFriends and hub.Friends[player.UserId] ~= 'other' then
-        return false
+-- Sniper Duels has multiple duels and FFA modes. Public Roblox team
+-- properties may be unset during a match; use replicated match/team markers
+-- when they exist. Do not assume that neutral players are enemies.
+local TEAM_KEYS = {
+    'MatchTeam', 'DuelTeam', 'CurrentTeam', 'TeamId', 'TeamID',
+    'TeamName', 'TeamNumber', 'Team', 'Side', 'Squad', 'TeamColor',
+}
+local MATCH_KEYS = {
+    'MatchId', 'MatchID', 'CurrentMatchId', 'DuelId', 'DuelID',
+    'CurrentDuelId', 'ArenaId', 'ArenaID',
+}
+local MODE_KEYS = {'GameMode', 'MatchMode', 'Mode', 'CurrentMode'}
+
+local function normalized(value)
+    if value == nil or typeof(value) == 'boolean' then return nil end
+    if typeof(value) == 'Instance' then
+        return string.lower(value:GetFullName())
     end
-    if settings.IgnoreTeam and not LP.Neutral and not player.Neutral
-        and LP.Team ~= nil and LP.Team == player.Team then
-        return false
+    local text = string.lower(tostring(value)):gsub('%s+', '')
+    if text == '' or text == 'none' or text == 'nil' or text == 'neutral'
+        or text == 'lobby' or text == 'spectator' or text == 'waiting'
+        or text == '0' or text == '-1' then
+        return nil
+    end
+    return text
+end
+
+local function readMarker(player, key)
+    -- Read only instances replicated to the client.
+    for _, source in ipairs({player, player.Character or player}) do
+        local attribute = source:GetAttribute(key)
+        local value = normalized(attribute)
+        if value then return value end
+
+        local obj = source:FindFirstChild(key)
+        if obj and obj:IsA('ValueBase') then
+            local ok, result = pcall(function() return obj.Value end)
+            if ok then
+                value = normalized(result)
+                if value then return value end
+            end
+        end
+    end
+    return nil
+end
+
+local function sharedMarker(other, keys)
+    for _, key in ipairs(keys) do
+        local mine = readMarker(LP, key)
+        local theirs = readMarker(other, key)
+        if mine and theirs then return mine, theirs, key end
+    end
+    return nil, nil, nil
+end
+
+local function isFFA()
+    for _, source in ipairs({LP, LP.Character or LP, Workspace}) do
+        for _, key in ipairs(MODE_KEYS) do
+            local value = normalized(source:GetAttribute(key))
+            if value then
+                if value == 'ffa' or value == 'freeforall' or
+                    value == 'free-for-all' then
+                    return true
+                end
+                -- A recognized team match mode is not FFA.
+                return false
+            end
+        end
+    end
+    return false
+end
+
+local function matchVerdict(other)
+    local mine, theirs = sharedMarker(other, MATCH_KEYS)
+    if mine and theirs and mine ~= theirs then return false end
+    -- If one player has a match identifier and the other does not,
+    -- treat them as unrelated/unknown, never a confirmed enemy.
+    for _, key in ipairs(MATCH_KEYS) do
+        local a, b = readMarker(LP, key), readMarker(other, key)
+        if (a and not b) or (b and not a) then return false end
     end
     return true
+end
+
+local function teamVerdict(other)
+    if LP.Team and other.Team and not LP.Neutral and not other.Neutral then
+        return LP.Team ~= other.Team, 'Roblox.Team'
+    end
+    if not LP.Neutral and not other.Neutral
+        and LP.TeamColor ~= other.TeamColor then
+        return true, 'Roblox.TeamColor'
+    end
+    local mine, theirs, key = sharedMarker(other, TEAM_KEYS)
+    if mine and theirs then
+        return mine ~= theirs, 'match.' .. key
+    end
+    if isFFA() then return true, 'FFA' end
+    -- Unknown != enemy: this is necessary in custom-team games.
+    return false, 'unknown'
+end
+
+-- Cache the verdict; RenderStepped must not scan Attributes/ValueBases.
+local verdicts = {}
+local teamSource = 'unknown'
+local function refreshTeamCache()
+    if not hub.Running then return end
+    local resolved = 'unknown'
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LP then
+            local allowed = true
+            if settings.IgnoreFriends and hub.Friends[p.UserId] ~= 'other' then
+                allowed = false
+            end
+            if allowed then allowed = matchVerdict(p) end
+            if allowed and settings.IgnoreTeam then
+                local identified, source = teamVerdict(p)
+                allowed = identified
+                if source ~= 'unknown' then resolved = source end
+            end
+            verdicts[p] = allowed
+        end
+    end
+    teamSource = resolved
+end
+
+local function enemy(player)
+    return player ~= LP
+        and player.Parent == Players
+        and verdicts[player] == true
 end
 local function clearHighlight(player)
     local highlight=hub.Highlights[player]
@@ -148,11 +267,11 @@ local function findTarget()
 end
 
 -- Screen and hub panel
-local screen=create('ScreenGui', {Name='ZyonHubV4', ResetOnSpawn=false,
+local screen=create('ScreenGui', {Name='ZyonHubV5', ResetOnSpawn=false,
     IgnoreGuiInset=false, DisplayOrder=1000,
     ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, PlayerGui)
 hub.Screen=screen
-local W,H=344,388
+local W,H=344,480
 local main=create('Frame',{Name='Hub',Active=true,BackgroundColor3=color.bg,
     BorderSizePixel=0,Size=UDim2.fromOffset(W,H),Position=UDim2.fromOffset(18,65)},screen)
 corner(main,19); outline(main)
@@ -261,12 +380,102 @@ bind(UIS.InputEnded,function(input)
     if same then sensitivityInput=nil end
 end)
 
+-- FOV slider: 5-50% of the shortest screen dimension.
+local fovCard=create('Frame',{
+    BackgroundColor3=color.panel,BorderSizePixel=0,
+    Position=UDim2.fromOffset(14,314),Size=UDim2.new(1,-28,0,86)
+},main)
+corner(fovCard,12)
+local fovHeading=label(fovCard,'TAMANHO DO FOV',12,7,210,24,14,color.white)
+fovHeading.Font=Enum.Font.GothamBold
+local fovValue=label(fovCard,'23%',246,7,56,24,14,color.purple)
+fovValue.Font=Enum.Font.GothamBold
+fovValue.TextXAlignment=Enum.TextXAlignment.Right
+local fovTrack=create('TextButton',{
+    Text='',AutoButtonColor=false,Active=true,
+    BackgroundColor3=color.bg,BorderSizePixel=0,
+    Position=UDim2.fromOffset(17,44),Size=UDim2.new(1,-34,0,13)
+},fovCard)
+corner(fovTrack,7)
+local fovFill=create('Frame',{
+    Active=false,BackgroundColor3=color.purple,BorderSizePixel=0,
+    Size=UDim2.fromScale(0,1)
+},fovTrack)
+corner(fovFill,7)
+local fovKnob=create('Frame',{
+    Active=false,BackgroundColor3=color.white,BorderSizePixel=0,
+    AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(19,19),
+    Position=UDim2.fromScale(0,0.5)
+},fovTrack)
+corner(fovKnob,10)
+label(fovCard,'MENOR',17,63,80,17,10,color.muted)
+local fovMaxLabel=label(fovCard,'MAIOR',220,63,80,17,10,color.muted)
+fovMaxLabel.TextXAlignment=Enum.TextXAlignment.Right
+
+-- Draw a lightweight circular guide without third-party Drawing APIs.
+local fovCircle=create('Frame',{
+    Name='FovGuide',BackgroundTransparency=1,BorderSizePixel=0,
+    AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
+    Visible=settings.Aim,Active=false,ZIndex=2,
+},screen)
+create('UICorner',{CornerRadius=UDim.new(1,0)},fovCircle)
+create('UIStroke',{Color=color.purple,Transparency=0.43,Thickness=1.5},fovCircle)
+local function refreshFovCircle()
+    local camera=Workspace.CurrentCamera
+    if not camera then return end
+    local v=camera.ViewportSize
+    local diameter=math.min(v.X,v.Y)*settings.FOV*2
+    fovCircle.Size=UDim2.fromOffset(diameter,diameter)
+    fovCircle.Visible=settings.Aim
+end
+local function setFOV(fov)
+    settings.FOV=math.clamp(math.floor(fov+0.5),5,50)/100
+    local percent=math.floor(settings.FOV*100+0.5)
+    local frac=(percent-5)/45
+    fovFill.Size=UDim2.fromScale(frac,1)
+    fovKnob.Position=UDim2.fromScale(frac,0.5)
+    fovValue.Text=tostring(percent)..'%'
+    refreshFovCircle()
+end
+setFOV(settings.FOV*100)
+
+local fovInput=nil
+local function updateFOVFromX(x)
+    local w=fovTrack.AbsoluteSize.X
+    if w<=0 then return end
+    local fraction=math.clamp((x-fovTrack.AbsolutePosition.X)/w,0,1)
+    setFOV(5+fraction*45)
+end
+bind(fovTrack.InputBegan,function(input)
+    if input.UserInputType~=Enum.UserInputType.Touch
+        and input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
+    fovInput=input
+    updateFOVFromX(input.Position.X)
+end)
+bind(UIS.InputChanged,function(input)
+    if not fovInput then return end
+    if fovInput.UserInputType==Enum.UserInputType.Touch then
+        if input~=fovInput then return end
+    elseif input.UserInputType~=Enum.UserInputType.MouseMovement then
+        return
+    end
+    updateFOVFromX(input.Position.X)
+end)
+bind(UIS.InputEnded,function(input)
+    if not fovInput then return end
+    local same=input==fovInput
+    if fovInput.UserInputType==Enum.UserInputType.MouseButton1 then
+        same=input.UserInputType==Enum.UserInputType.MouseButton1
+    end
+    if same then fovInput=nil end
+end)
+
 local statusPanel=create('Frame',{BackgroundColor3=color.panel,BorderSizePixel=0,
-    Position=UDim2.fromOffset(14,314),Size=UDim2.new(1,-28,0,49)},main)
+    Position=UDim2.fromOffset(14,409),Size=UDim2.new(1,-28,0,49)},main)
 corner(statusPanel,12)
 local status=label(statusPanel,'ESP: ON  |  AIM: ON',12,5,280,21,12,color.green)
 local count=label(statusPanel,'Adversarios: 0',12,27,280,18,12,color.white)
-local footer=label(main,'ZYON  •  MOBILE  •  V4',15,367,314,17,11,color.purple)
+local footer=label(main,'ZYON  •  MOBILE  •  V5',15,464,314,15,11,color.purple)
 footer.TextXAlignment=Enum.TextXAlignment.Center
 
 local bubble=button(screen,'◈',12,130,58,58,color.panel)
@@ -291,6 +500,7 @@ local function resize()
     local scale=math.min(1,(v.X-24)/W,(v.Y-24)/H)
     scale=math.max(0.1,scale)
     mainScale.Scale=scale
+    refreshFovCircle()
     if firstLayout then
         main.Position=UDim2.fromOffset(math.max(0,(v.X-W*scale)*0.5),
             math.max(0,(v.Y-H*scale)*0.5))
@@ -366,6 +576,7 @@ end)
 
 local elapsed=settings.TargetInterval
 local function refresh()
+    refreshFovCircle()
     espSwitch.Text=settings.ESP and 'ON' or 'OFF'
     espSwitch.BackgroundColor3=settings.ESP and color.green or color.red
     aimSwitch.Text=settings.Aim and 'ON' or 'OFF'
@@ -387,7 +598,7 @@ bind(aimSwitch.Activated,function()
     elapsed=settings.TargetInterval
     refresh()
 end)
-local renderKey='ZYON_SMOOTH_AIM_V4'
+local renderKey='ZYON_SMOOTH_AIM_V5'
 RunService:BindToRenderStep(renderKey,Enum.RenderPriority.Camera.Value+1,function(dt)
     if not hub.Running or not settings.Aim then return end
     local camera=Workspace.CurrentCamera
@@ -414,6 +625,7 @@ end)
 bind(Players.PlayerAdded,registerFriend)
 bind(Players.PlayerRemoving,function(player)
     clearHighlight(player)
+    verdicts[player]=nil
     hub.Friends[player.UserId]=nil
     if hub.Target and player.Character and
         hub.Target:IsDescendantOf(player.Character) then
@@ -424,12 +636,15 @@ for _,player in ipairs(Players:GetPlayers()) do registerFriend(player) end
 
 task.spawn(function()
     while hub.Running do
+        refreshTeamCache()
         local n=0
         for _,player in ipairs(Players:GetPlayers()) do
             if not hub.Running then break end
             if updateHighlight(player) then n=n+1 end
         end
-        if hub.Running then count.Text='Adversarios: '..n end
+        if hub.Running then
+            count.Text='Adversarios: '..n..'  |  Time: '..teamSource
+        end
         task.wait(settings.ESPInterval)
     end
 end)
@@ -447,4 +662,4 @@ function hub.Stop()
 end
 bind(close.Activated,hub.Stop)
 refresh()
-print('[ZYON] Hub v4 carregado | auto aim + sensibilidade')
+print('[ZYON] Hub v5 | time/partida + FOV ajustavel')
