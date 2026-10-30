@@ -1,5 +1,5 @@
--- ZYON HUB v3 | Roblox Luau | Mobile
--- Enemy ESP, friends/team exclusion, smooth aim, responsive collapsible GUI
+-- ZYON HUB v4 | Roblox Luau | Mobile
+-- Enemy ESP, friend/team filter, always-on smooth aim, adjustable sensitivity
 
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
@@ -24,7 +24,7 @@ local color = {
     red = Color3.fromRGB(255,54,72), white = Color3.fromRGB(242,241,252),
     muted = Color3.fromRGB(160,160,178)
 }
-local hub = {Running=true, Minimized=false, HoldingAim=false, Target=nil,
+local hub = {Running=true, Minimized=false, Target=nil,
     Friends={}, Highlights={}, Connections={}}
 env.ZyonHub = hub
 
@@ -148,11 +148,11 @@ local function findTarget()
 end
 
 -- Screen and hub panel
-local screen=create('ScreenGui', {Name='ZyonHubV3', ResetOnSpawn=false,
+local screen=create('ScreenGui', {Name='ZyonHubV4', ResetOnSpawn=false,
     IgnoreGuiInset=false, DisplayOrder=1000,
     ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, PlayerGui)
 hub.Screen=screen
-local W,H=344,315
+local W,H=344,388
 local main=create('Frame',{Name='Hub',Active=true,BackgroundColor3=color.bg,
     BorderSizePixel=0,Size=UDim2.fromOffset(W,H),Position=UDim2.fromOffset(18,65)},screen)
 corner(main,19); outline(main)
@@ -188,22 +188,91 @@ local function switch(text,desc,y,active)
     return toggle
 end
 local espSwitch=switch('ENEMY ESP','Inimigos em vermelho; amigos ocultos',67,settings.ESP)
-local aimSwitch=switch('SMOOTH AIM','Segure AIM para acompanhar o alvo',143,settings.Aim)
+local aimSwitch=switch('AUTO AIM','Ativo continuamente quando ligado',143,settings.Aim)
+-- Sensibilidade da mira: 1 = lento/suave, 20 = rapido
+local sensitivityCard=create('Frame',{
+    BackgroundColor3=color.panel,BorderSizePixel=0,
+    Position=UDim2.fromOffset(14,218),Size=UDim2.new(1,-28,0,88)
+},main)
+corner(sensitivityCard,12)
+local sensitivityTitle=label(sensitivityCard,'SENSIBILIDADE',12,7,210,24,14,color.white)
+sensitivityTitle.Font=Enum.Font.GothamBold
+local sensitivityValue=label(sensitivityCard,tostring(settings.Smoothness),261,7,41,24,14,color.purple)
+sensitivityValue.Font=Enum.Font.GothamBold
+sensitivityValue.TextXAlignment=Enum.TextXAlignment.Right
+local sensitivityTrack=create('TextButton',{
+    Text='',AutoButtonColor=false,Active=true,
+    BackgroundColor3=color.bg,BorderSizePixel=0,
+    Position=UDim2.fromOffset(17,44),Size=UDim2.new(1,-34,0,13)
+},sensitivityCard)
+corner(sensitivityTrack,7)
+local sensitivityFill=create('Frame',{
+    Active=false,BackgroundColor3=color.purple,BorderSizePixel=0,
+    Size=UDim2.fromScale(0,1)
+},sensitivityTrack)
+corner(sensitivityFill,7)
+local sensitivityKnob=create('Frame',{
+    Active=false,BackgroundColor3=color.white,BorderSizePixel=0,
+    AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(19,19),
+    Position=UDim2.fromScale(0,0.5)
+},sensitivityTrack)
+corner(sensitivityKnob,10)
+label(sensitivityCard,'SUAVE',17,63,80,17,10,color.muted)
+local fastLabel=label(sensitivityCard,'RAPIDO',220,63,80,17,10,color.muted)
+fastLabel.TextXAlignment=Enum.TextXAlignment.Right
+
+local function setSensitivity(value)
+    settings.Smoothness=math.clamp(math.floor(value+0.5),1,20)
+    local fraction=(settings.Smoothness-1)/19
+    sensitivityFill.Size=UDim2.fromScale(fraction,1)
+    sensitivityKnob.Position=UDim2.fromScale(fraction,0.5)
+    sensitivityValue.Text=tostring(settings.Smoothness)..'/20'
+end
+setSensitivity(settings.Smoothness)
+
+local sensitivityInput=nil
+local function updateSensitivityFromX(x)
+    local width=sensitivityTrack.AbsoluteSize.X
+    if width<=0 then return end
+    local fraction=math.clamp((x-sensitivityTrack.AbsolutePosition.X)/width,0,1)
+    setSensitivity(1+fraction*19)
+end
+bind(sensitivityTrack.InputBegan,function(input)
+    if input.UserInputType~=Enum.UserInputType.Touch
+        and input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
+    sensitivityInput=input
+    updateSensitivityFromX(input.Position.X)
+end)
+bind(UIS.InputChanged,function(input)
+    if not sensitivityInput then return end
+    if sensitivityInput.UserInputType==Enum.UserInputType.Touch then
+        if input~=sensitivityInput then return end
+    elseif input.UserInputType~=Enum.UserInputType.MouseMovement then
+        return
+    end
+    updateSensitivityFromX(input.Position.X)
+end)
+bind(UIS.InputEnded,function(input)
+    if not sensitivityInput then return end
+    local same=input==sensitivityInput
+    if sensitivityInput.UserInputType==Enum.UserInputType.MouseButton1 then
+        same=input.UserInputType==Enum.UserInputType.MouseButton1
+    end
+    if same then sensitivityInput=nil end
+end)
+
 local statusPanel=create('Frame',{BackgroundColor3=color.panel,BorderSizePixel=0,
-    Position=UDim2.fromOffset(14,220),Size=UDim2.new(1,-28,0,52)},main)
+    Position=UDim2.fromOffset(14,314),Size=UDim2.new(1,-28,0,49)},main)
 corner(statusPanel,12)
 local status=label(statusPanel,'ESP: ON  |  AIM: ON',12,5,280,21,12,color.green)
-local count=label(statusPanel,'Adversarios: 0',12,29,280,18,12,color.white)
-local footer=label(main,'ZYON  •  MOBILE',15,286,314,18,11,color.purple)
+local count=label(statusPanel,'Adversarios: 0',12,27,280,18,12,color.white)
+local footer=label(main,'ZYON  •  MOBILE  •  V4',15,367,314,17,11,color.purple)
 footer.TextXAlignment=Enum.TextXAlignment.Center
 
 local bubble=button(screen,'◈',12,130,58,58,color.panel)
 bubble.Name='CollapsedHub'; bubble.TextSize=30; bubble.Visible=false
 corner(bubble,21); outline(bubble)
 local bubbleScale=create('UIScale',{Scale=1},bubble)
-local aimButton=button(screen,'AIM',100,160,68,68,color.panel)
-aimButton.Name='MobileAim'; aimButton.TextSize=16; corner(aimButton,34); outline(aimButton)
-local aimScale=create('UIScale',{Scale=1},aimButton)
 local viewportConnection
 local firstLayout=true
 local function viewport()
@@ -229,11 +298,8 @@ local function resize()
     end
     clampPosition(main,W*scale,H*scale)
     local mini=math.min(1,math.max(0.1,math.min(v.X,v.Y)/250))
-    bubbleScale.Scale=mini; aimScale.Scale=mini
+    bubbleScale.Scale=mini
     clampPosition(bubble,58*mini,58*mini)
-    aimButton.Position=UDim2.fromOffset(
-        math.max(0,v.X-68*mini-20),
-        math.max(0,v.Y*0.55-34*mini))
 end
 local function watchCamera()
     if viewportConnection then viewportConnection:Disconnect() end
@@ -298,12 +364,12 @@ bind(bubble.Activated,function()
     if os.clock()-lastDrag>=0.25 then minimized(false) end
 end)
 
+local elapsed=settings.TargetInterval
 local function refresh()
     espSwitch.Text=settings.ESP and 'ON' or 'OFF'
     espSwitch.BackgroundColor3=settings.ESP and color.green or color.red
     aimSwitch.Text=settings.Aim and 'ON' or 'OFF'
     aimSwitch.BackgroundColor3=settings.Aim and color.green or color.red
-    aimButton.Visible=settings.Aim
     status.Text='ESP: '..(settings.ESP and 'ON' or 'OFF')..
         '  |  AIM: '..(settings.Aim and 'ON' or 'OFF')
     status.TextColor3=(settings.ESP or settings.Aim) and color.green or color.muted
@@ -317,33 +383,13 @@ bind(espSwitch.Activated,function()
 end)
 bind(aimSwitch.Activated,function()
     settings.Aim=not settings.Aim
-    if not settings.Aim then hub.HoldingAim=false; hub.Target=nil end
+    hub.Target=nil
+    elapsed=settings.TargetInterval
     refresh()
 end)
-local aimTouch
-bind(aimButton.InputBegan,function(input)
-    if not settings.Aim then return end
-    if input.UserInputType~=Enum.UserInputType.Touch and
-        input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
-    aimTouch=input; hub.HoldingAim=true; hub.Target=nil
-    aimButton.Text='LOCK'; aimButton.BackgroundColor3=color.purple
-end)
-bind(UIS.InputEnded,function(input)
-    if not aimTouch then return end
-    local released=input==aimTouch
-    if aimTouch.UserInputType==Enum.UserInputType.MouseButton1 then
-        released=input.UserInputType==Enum.UserInputType.MouseButton1
-    end
-    if released then
-        aimTouch=nil; hub.HoldingAim=false; hub.Target=nil
-        aimButton.Text='AIM'; aimButton.BackgroundColor3=color.panel
-    end
-end)
-
-local renderKey='ZYON_SMOOTH_AIM_V3'
-local elapsed=settings.TargetInterval
+local renderKey='ZYON_SMOOTH_AIM_V4'
 RunService:BindToRenderStep(renderKey,Enum.RenderPriority.Camera.Value+1,function(dt)
-    if not hub.Running or not settings.Aim or not hub.HoldingAim then return end
+    if not hub.Running or not settings.Aim then return end
     local camera=Workspace.CurrentCamera
     if not camera then return end
     elapsed=elapsed+dt
@@ -390,7 +436,7 @@ end)
 
 function hub.Stop()
     if not hub.Running then return end
-    hub.Running=false; hub.HoldingAim=false; hub.Target=nil
+    hub.Running=false; hub.Target=nil
     RunService:UnbindFromRenderStep(renderKey)
     for _,connection in ipairs(hub.Connections) do
         connection:Disconnect()
@@ -401,4 +447,4 @@ function hub.Stop()
 end
 bind(close.Activated,hub.Stop)
 refresh()
-print('[ZYON] Hub v3 carregado')
+print('[ZYON] Hub v4 carregado | auto aim + sensibilidade')
