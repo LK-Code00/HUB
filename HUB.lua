@@ -1,5 +1,5 @@
--- ZYON HUB v5 | Roblox Luau | Mobile
--- Conservative team/match recognition, auto aim, adjustable FOV and sensitivity
+-- ZYON HUB v6 | Roblox Luau | Mobile
+-- Auto team/match filter with manual player classification, FOV and sensitivity
 
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
@@ -25,7 +25,8 @@ local color = {
     muted = Color3.fromRGB(160,160,178)
 }
 local hub = {Running=true, Minimized=false, Target=nil,
-    Friends={}, Highlights={}, Connections={}}
+    Friends={}, Highlights={}, Relations={}, Connections={}}
+settings.ForceFFA = false
 env.ZyonHub = hub
 
 local function bind(signal, callback)
@@ -176,15 +177,26 @@ local function refreshTeamCache()
     local resolved = 'unknown'
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LP then
-            local allowed = true
-            if settings.IgnoreFriends and hub.Friends[p.UserId] ~= 'other' then
+            local relation = hub.Relations[p.UserId]
+            local allowed = hub.Friends[p.UserId] == 'other'
+                or not settings.IgnoreFriends
+            if allowed and relation == 'ally' then
                 allowed = false
-            end
-            if allowed then allowed = matchVerdict(p) end
-            if allowed and settings.IgnoreTeam then
-                local identified, source = teamVerdict(p)
-                allowed = identified
-                if source ~= 'unknown' then resolved = source end
+            elseif allowed and relation == 'enemy' then
+                -- Manually selected player: explicit classification wins.
+                allowed = true
+                resolved = 'manual'
+            elseif allowed then
+                allowed = matchVerdict(p)
+                if allowed and settings.IgnoreTeam then
+                    if settings.ForceFFA then
+                        resolved = 'FFA manual'
+                    else
+                        local identified, source = teamVerdict(p)
+                        allowed = identified
+                        if source ~= 'unknown' then resolved = source end
+                    end
+                end
             end
             verdicts[p] = allowed
         end
@@ -267,7 +279,7 @@ local function findTarget()
 end
 
 -- Screen and hub panel
-local screen=create('ScreenGui', {Name='ZyonHubV5', ResetOnSpawn=false,
+local screen=create('ScreenGui', {Name='ZyonHubV6', ResetOnSpawn=false,
     IgnoreGuiInset=false, DisplayOrder=1000,
     ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, PlayerGui)
 hub.Screen=screen
@@ -473,10 +485,113 @@ end)
 local statusPanel=create('Frame',{BackgroundColor3=color.panel,BorderSizePixel=0,
     Position=UDim2.fromOffset(14,409),Size=UDim2.new(1,-28,0,49)},main)
 corner(statusPanel,12)
-local status=label(statusPanel,'ESP: ON  |  AIM: ON',12,5,280,21,12,color.green)
-local count=label(statusPanel,'Adversarios: 0',12,27,280,18,12,color.white)
-local footer=label(main,'ZYON  •  MOBILE  •  V5',15,464,314,15,11,color.purple)
+local status=label(statusPanel,'ESP: ON  |  AIM: ON',12,5,170,21,12,color.green)
+local count=label(statusPanel,'Adversarios: 0',12,27,300,18,12,color.white)
+local rosterOpenButton=button(statusPanel,'JOGADORES',200,7,102,31,color.purple)
+rosterOpenButton.TextSize=11
+local footer=label(main,'ZYON  •  MOBILE  •  V6',15,464,314,15,11,color.purple)
 footer.TextXAlignment=Enum.TextXAlignment.Center
+
+-- Roster: when Sniper Duels does not replicate its custom teams to
+-- ordinary player fields, manually classify players in the current duel.
+-- No need to restart the script and no extra aim button.
+local rosterPanel=create('Frame',{
+    Name='PlayerClassifier',BackgroundColor3=color.bg,
+    BorderSizePixel=0,Size=UDim2.fromScale(1,1),
+    Visible=false,ZIndex=15,Active=true
+},main)
+corner(rosterPanel,19)
+local rosterTitle=label(rosterPanel,'JOGADORES / EQUIPES',17,11,250,32,18,color.purple)
+rosterTitle.ZIndex=16
+rosterTitle.Font=Enum.Font.GothamBold
+local rosterBack=button(rosterPanel,'VOLTAR',W-99,49,84,31,color.panel)
+rosterBack.TextSize=12
+rosterBack.ZIndex=16
+local modeToggle=button(rosterPanel,'MODO: AUTO',15,49,153,31,color.panel)
+modeToggle.TextSize=12
+modeToggle.ZIndex=16
+local rosterHint=label(rosterPanel,'Toque para mudar: AUTO > INIMIGO > ALIADO',15,90,314,36,11,color.muted)
+rosterHint.TextWrapped=true
+rosterHint.ZIndex=16
+local rosterScroll=create('ScrollingFrame',{
+    Name='RosterScroll',BackgroundTransparency=1,BorderSizePixel=0,
+    Position=UDim2.fromOffset(12,132),
+    Size=UDim2.new(1,-24,1,-151),
+    CanvasSize=UDim2.fromOffset(0,0),
+    AutomaticCanvasSize=Enum.AutomaticSize.None,
+    ScrollBarThickness=4,ScrollingDirection=Enum.ScrollingDirection.Y,
+    ScrollBarImageColor3=color.purple,ZIndex=16,
+},rosterPanel)
+local layout=create('UIListLayout',{
+    Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder
+},rosterScroll)
+local function rebuildRoster()
+    if not hub.Running then return end
+    for _, child in ipairs(rosterScroll:GetChildren()) do
+        if child:IsA('Frame') then child:Destroy() end
+    end
+    local people={}
+    for _, player in ipairs(Players:GetPlayers()) do
+        if player~=LP then table.insert(people,player) end
+    end
+    table.sort(people,function(a,b) return a.Name:lower()<b.Name:lower() end)
+    for index, player in ipairs(people) do
+        local row=create('Frame',{
+            BackgroundColor3=color.panel,BorderSizePixel=0,
+            Size=UDim2.new(1,-7,0,42),LayoutOrder=index,ZIndex=17,
+        },rosterScroll)
+        corner(row,9)
+        local display=player.DisplayName
+        if #display>18 then display=display:sub(1,17)..'...' end
+        local nameLabel=label(row,display,9,6,183,30,12,color.white)
+        nameLabel.ZIndex=18
+        local relation=hub.Relations[player.UserId]
+        local relationText=relation=='enemy' and 'INIMIGO'
+            or relation=='ally' and 'ALIADO' or 'AUTO'
+        local relationColor=relation=='enemy' and color.red
+            or relation=='ally' and color.green or color.purple
+        local relationButton=button(row,relationText,W-125,5,94,31,relationColor)
+        relationButton.TextSize=12
+        relationButton.ZIndex=18
+        bind(relationButton.Activated,function()
+            if not hub.Running or player.Parent~=Players then return end
+            local old=hub.Relations[player.UserId]
+            hub.Relations[player.UserId] =
+                old==nil and 'enemy' or old=='enemy' and 'ally' or nil
+            refreshTeamCache()
+            hub.Target=nil
+            -- Remove stale highlights immediately before next ESP cycle.
+            for who in pairs(hub.Highlights) do
+                if not enemy(who) then clearHighlight(who) end
+            end
+            rebuildRoster()
+        end)
+    end
+    rosterScroll.CanvasSize=UDim2.fromOffset(0,#people*47+4)
+end
+bind(rosterOpenButton.Activated,function()
+    rosterPanel.Visible=true
+    rebuildRoster()
+end)
+bind(rosterBack.Activated,function()
+    rosterPanel.Visible=false
+end)
+bind(modeToggle.Activated,function()
+    settings.ForceFFA=not settings.ForceFFA
+    modeToggle.Text=settings.ForceFFA and 'MODO: FFA' or 'MODO: AUTO'
+    refreshTeamCache()
+    hub.Target=nil
+    for who in pairs(hub.Highlights) do
+        if not enemy(who) then clearHighlight(who) end
+    end
+    rebuildRoster()
+end)
+bind(Players.PlayerAdded,function()
+    if rosterPanel.Visible then rebuildRoster() end
+end)
+bind(Players.PlayerRemoving,function()
+    if rosterPanel.Visible then rebuildRoster() end
+end)
 
 local bubble=button(screen,'◈',12,130,58,58,color.panel)
 bubble.Name='CollapsedHub'; bubble.TextSize=30; bubble.Visible=false
@@ -625,6 +740,7 @@ end)
 bind(Players.PlayerAdded,registerFriend)
 bind(Players.PlayerRemoving,function(player)
     clearHighlight(player)
+    hub.Relations[player.UserId]=nil
     verdicts[player]=nil
     hub.Friends[player.UserId]=nil
     if hub.Target and player.Character and
@@ -643,7 +759,10 @@ task.spawn(function()
             if updateHighlight(player) then n=n+1 end
         end
         if hub.Running then
-            count.Text='Adversarios: '..n..'  |  Time: '..teamSource
+            count.Text='Adversarios: '..n..' | Time: '..teamSource
+            if teamSource=='unknown' then
+                count.Text='Equipe nao detectada: use JOGADORES'
+            end
         end
         task.wait(settings.ESPInterval)
     end
@@ -662,4 +781,4 @@ function hub.Stop()
 end
 bind(close.Activated,hub.Stop)
 refresh()
-print('[ZYON] Hub v5 | time/partida + FOV ajustavel')
+print('[ZYON] Hub v6 | filtro automatico + selecao manual + FOV')
