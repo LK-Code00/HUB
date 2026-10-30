@@ -580,7 +580,9 @@ local function rebuildRoster()
     table.sort(people,function(a,b) return a.Name:lower()<b.Name:lower() end)
     for index, player in ipairs(people) do
         local row=create('Frame',{
-            BackgroundColor3=color.panel,BorderSizePixel=0,
+            BackgroundColor3=color.panel,
+            BackgroundTransparency=settings.HubTransparency,
+            BorderSizePixel=0,
             Size=UDim2.new(1,-7,0,42),LayoutOrder=index,ZIndex=17,
         },rosterScroll)
         corner(row,9)
@@ -638,6 +640,7 @@ end)
 
 local bubble=button(screen,'◈',12,130,58,58,color.panel)
 bubble.Name='CollapsedHub'; bubble.TextSize=30; bubble.Visible=false
+bubble.ZIndex=30
 corner(bubble,21); outline(bubble)
 local bubbleScale=create('UIScale',{Scale=1},bubble)
 -- ---------- Three-tab layout ----------
