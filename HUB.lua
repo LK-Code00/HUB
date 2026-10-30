@@ -1,5 +1,5 @@
--- ZYON HUB v7 | Roblox Luau | Mobile
--- Separate tabs, aligned FOV, improved tracking, themes, transparency, free dragging
+-- ZYON HUB v8 | Roblox Luau | Desktop + Mobile
+-- Responsive cards, dedicated FOV controls, movable and lockable acquisition area.
 
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
@@ -16,19 +16,26 @@ end
 local settings = {
     ESP = true, Aim = true, IgnoreFriends = true, IgnoreTeam = true,
     VisibleOnly = true, Smoothness = 9, FOV = 0.23,
-    ShowFOV = true, HubTransparency = 0.10, FillTransparency = 0.55,
+    ShowFOV = true, HubTransparency = 0.06, FillTransparency = 0.55,
+    FOVX = 0.5, FOVY = 0.5, FOVLocked = true,
     MaxDistance = 350, ESPInterval = 0.3, TargetInterval = 0.12,
 }
 local color = {
-    bg = Color3.fromRGB(15,17,25), panel = Color3.fromRGB(29,30,43),
-    purple = Color3.fromRGB(151,99,255), green = Color3.fromRGB(40,210,126),
-    red = Color3.fromRGB(255,54,72), white = Color3.fromRGB(242,241,252),
-    muted = Color3.fromRGB(160,160,178)
+    bg = Color3.fromRGB(16,18,27), panel = Color3.fromRGB(26,29,41),
+    purple = Color3.fromRGB(165,132,255), green = Color3.fromRGB(74,222,151),
+    red = Color3.fromRGB(255,105,124), white = Color3.fromRGB(240,242,250),
+    muted = Color3.fromRGB(162,172,195), line = Color3.fromRGB(49,55,74)
 }
 local hub = {Running=true, Minimized=false, Target=nil,
     Friends={}, Highlights={}, Relations={}, Connections={}}
 settings.ForceFFA = false
 env.ZyonHub = hub
+
+-- ScreenInsets.None and WorldToViewportPoint share the viewport origin.
+-- Store a fraction so the chosen position survives window/orientation changes.
+local function fovCenter(viewport)
+    return Vector2.new(viewport.X * settings.FOVX, viewport.Y * settings.FOVY)
+end
 
 local function bind(signal, callback)
     local connection = signal:Connect(callback)
@@ -43,9 +50,6 @@ local function create(class, props, parent)
 end
 local function corner(obj, radius)
     create('UICorner', {CornerRadius=UDim.new(0,radius)}, obj)
-end
-local function outline(obj)
-    create('UIStroke', {Color=color.purple, Transparency=0.3, Thickness=1.5}, obj)
 end
 local function label(parent, text, x,y,w,h,size, hue)
     return create('TextLabel', {Text=text, BackgroundTransparency=1,
@@ -267,7 +271,7 @@ local function findTarget()
     local camera=Workspace.CurrentCamera
     if not camera then return nil end
     local viewport=camera.ViewportSize
-    local center=viewport*0.5
+    local center=fovCenter(viewport)
     local radius=math.min(viewport.X,viewport.Y)*settings.FOV
     local best=radius*radius
 
@@ -311,731 +315,590 @@ local function findTarget()
     return closest
 end
 
--- Screen and hub panel
-local screen=create('ScreenGui', {Name='ZyonHubV7', ResetOnSpawn=false,
-    IgnoreGuiInset=true, ScreenInsets=Enum.ScreenInsets.None, DisplayOrder=1000,
-    ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, PlayerGui)
-hub.Screen=screen
-local W,H=350,410
-local main=create('Frame',{Name='Hub',Active=true,BackgroundColor3=color.bg,
-    BackgroundTransparency=settings.HubTransparency, ZIndex=5,
-    BorderSizePixel=0,Size=UDim2.fromOffset(W,H),Position=UDim2.fromOffset(18,65)},screen)
-corner(main,19); outline(main)
-local mainScale=create('UIScale',{Scale=1},main)
-local header=create('Frame',{Active=true,BackgroundTransparency=1,
-    Size=UDim2.new(1,0,0,55)},main)
-local heading=label(header,'ZYON HUB',17,9,188,35,21,color.purple)
-heading.Font=Enum.Font.GothamBold
-local function button(parent,text,x,y,w,h,hue)
-    local btn=create('TextButton',{Text=text,Font=Enum.Font.GothamBold,
-        TextSize=18,TextColor3=color.white,BackgroundColor3=hue,
-        Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
-        BorderSizePixel=0,Active=true},parent)
-    corner(btn,10)
-    return btn
-end
-local minus=button(header,'−',W-84,10,34,34,color.panel)
-local close=button(header,'×',W-44,10,34,34,color.panel)
-close.TextColor3=color.red
--- Broad draggable zone covering the header/title, without covering buttons.
-local dragArea=create('TextButton',{
-    Name='DragHeader',Text='',AutoButtonColor=false,
-    BackgroundTransparency=1,BorderSizePixel=0,Active=true,
-    Position=UDim2.fromOffset(0,0),
-    Size=UDim2.new(1,-104,1,0),ZIndex=4
-},header)
-create('Frame',{BackgroundColor3=color.purple,BackgroundTransparency=0.5,
-    BorderSizePixel=0,Position=UDim2.fromOffset(15,55),
-    Size=UDim2.new(1,-30,0,1)},main)
-local function switch(text,desc,y,active)
-    local card=create('Frame',{BackgroundColor3=color.panel,BorderSizePixel=0,
-        Position=UDim2.fromOffset(14,y),Size=UDim2.new(1,-28,0,67)},main)
-    corner(card,12)
-    local title=label(card,text,12,6,200,25,15,color.white)
-    title.Font=Enum.Font.GothamBold
-    label(card,desc,12,38,280,18,11,color.muted)
-    local toggle=button(card,active and 'ON' or 'OFF',W-89,9,49,28,
-        active and color.green or color.red)
-    toggle.TextSize=13; toggle.TextColor3=color.bg
-    return toggle,card
-end
-local espSwitch,espCard=switch('ENEMY ESP','Inimigos em vermelho; amigos ocultos',67,settings.ESP)
-local aimSwitch,aimCard=switch('AUTO AIM','Ativo continuamente quando ligado',143,settings.Aim)
--- Sensibilidade da mira: 1 = lento/suave, 20 = rapido
-local sensitivityCard=create('Frame',{
-    BackgroundColor3=color.panel,BorderSizePixel=0,
-    Position=UDim2.fromOffset(14,218),Size=UDim2.new(1,-28,0,88)
-},main)
-corner(sensitivityCard,12)
-local sensitivityTitle=label(sensitivityCard,'SENSIBILIDADE',12,7,210,24,14,color.white)
-sensitivityTitle.Font=Enum.Font.GothamBold
-local sensitivityValue=label(sensitivityCard,tostring(settings.Smoothness),261,7,41,24,14,color.purple)
-sensitivityValue.Font=Enum.Font.GothamBold
-sensitivityValue.TextXAlignment=Enum.TextXAlignment.Right
-local sensitivityTrack=create('TextButton',{
-    Text='',AutoButtonColor=false,Active=true,
-    BackgroundColor3=color.bg,BorderSizePixel=0,
-    Position=UDim2.fromOffset(17,44),Size=UDim2.new(1,-34,0,13)
-},sensitivityCard)
-corner(sensitivityTrack,7)
-local sensitivityFill=create('Frame',{
-    Active=false,BackgroundColor3=color.purple,BorderSizePixel=0,
-    Size=UDim2.fromScale(0,1)
-},sensitivityTrack)
-corner(sensitivityFill,7)
-local sensitivityKnob=create('Frame',{
-    Active=false,BackgroundColor3=color.white,BorderSizePixel=0,
-    AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(19,19),
-    Position=UDim2.fromScale(0,0.5)
-},sensitivityTrack)
-corner(sensitivityKnob,10)
-label(sensitivityCard,'SUAVE',17,63,80,17,10,color.muted)
-local fastLabel=label(sensitivityCard,'RAPIDO',220,63,80,17,10,color.muted)
-fastLabel.TextXAlignment=Enum.TextXAlignment.Right
+-- UI stays scoped so the standalone script remains below Luau's local limit.
+do
+    local W, H = 368, 540
+    local ui, accentText, accentFill, accentStroke, surfaces = {}, {}, {}, {}, {}
+    local activeTab = 'aim'
+    local rebuildRoster, refresh, setLocked, refreshFov, resize
+    local screen = create('ScreenGui', {
+        Name='ZyonHubV8', ResetOnSpawn=false, IgnoreGuiInset=true,
+        ScreenInsets=Enum.ScreenInsets.None, DisplayOrder=1000,
+        ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
+    }, PlayerGui)
+    hub.Screen = screen
 
-local function setSensitivity(value)
-    settings.Smoothness=math.clamp(math.floor(value+0.5),1,20)
-    local fraction=(settings.Smoothness-1)/19
-    sensitivityFill.Size=UDim2.fromScale(fraction,1)
-    sensitivityKnob.Position=UDim2.fromScale(fraction,0.5)
-    sensitivityValue.Text=tostring(settings.Smoothness)..'/20'
-end
-setSensitivity(settings.Smoothness)
-
-local sensitivityInput=nil
-local function updateSensitivityFromX(x)
-    local width=sensitivityTrack.AbsoluteSize.X
-    if width<=0 then return end
-    local fraction=math.clamp((x-sensitivityTrack.AbsolutePosition.X)/width,0,1)
-    setSensitivity(1+fraction*19)
-end
-bind(sensitivityTrack.InputBegan,function(input)
-    if input.UserInputType~=Enum.UserInputType.Touch
-        and input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
-    sensitivityInput=input
-    updateSensitivityFromX(input.Position.X)
-end)
-bind(UIS.InputChanged,function(input)
-    if not sensitivityInput then return end
-    if sensitivityInput.UserInputType==Enum.UserInputType.Touch then
-        if input~=sensitivityInput then return end
-    elseif input.UserInputType~=Enum.UserInputType.MouseMovement then
-        return
+    local function stroke(object, hue, transparency)
+        return create('UIStroke', {Color=hue, Thickness=1,
+            Transparency=transparency or 0, ApplyStrokeMode=Enum.ApplyStrokeMode.Border}, object)
     end
-    updateSensitivityFromX(input.Position.X)
-end)
-bind(UIS.InputEnded,function(input)
-    if not sensitivityInput then return end
-    local same=input==sensitivityInput
-    if sensitivityInput.UserInputType==Enum.UserInputType.MouseButton1 then
-        same=input.UserInputType==Enum.UserInputType.MouseButton1
+    local function surface(object, radius)
+        corner(object, radius or 14)
+        stroke(object, color.line, 0.25)
+        table.insert(surfaces, object)
+        object.BackgroundTransparency = settings.HubTransparency
+        return object
     end
-    if same then sensitivityInput=nil end
-end)
-
--- FOV slider: 5-50% of the shortest screen dimension.
-local fovCard=create('Frame',{
-    BackgroundColor3=color.panel,BorderSizePixel=0,
-    Position=UDim2.fromOffset(14,314),Size=UDim2.new(1,-28,0,86)
-},main)
-corner(fovCard,12)
-local fovHeading=label(fovCard,'TAMANHO DO FOV',12,7,210,24,14,color.white)
-fovHeading.Font=Enum.Font.GothamBold
-local fovValue=label(fovCard,'23%',246,7,56,24,14,color.purple)
-fovValue.Font=Enum.Font.GothamBold
-fovValue.TextXAlignment=Enum.TextXAlignment.Right
-local fovTrack=create('TextButton',{
-    Text='',AutoButtonColor=false,Active=true,
-    BackgroundColor3=color.bg,BorderSizePixel=0,
-    Position=UDim2.fromOffset(17,44),Size=UDim2.new(1,-34,0,13)
-},fovCard)
-corner(fovTrack,7)
-local fovFill=create('Frame',{
-    Active=false,BackgroundColor3=color.purple,BorderSizePixel=0,
-    Size=UDim2.fromScale(0,1)
-},fovTrack)
-corner(fovFill,7)
-local fovKnob=create('Frame',{
-    Active=false,BackgroundColor3=color.white,BorderSizePixel=0,
-    AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(19,19),
-    Position=UDim2.fromScale(0,0.5)
-},fovTrack)
-corner(fovKnob,10)
-label(fovCard,'MENOR',17,63,80,17,10,color.muted)
-local fovMaxLabel=label(fovCard,'MAIOR',220,63,80,17,10,color.muted)
-fovMaxLabel.TextXAlignment=Enum.TextXAlignment.Right
-
--- Draw a lightweight circular guide without third-party Drawing APIs.
-local fovCircle=create('Frame',{
-    Name='FovGuide',BackgroundTransparency=1,BorderSizePixel=0,
-    AnchorPoint=Vector2.new(0.5,0.5),Position=UDim2.fromScale(0.5,0.5),
-    Visible=settings.Aim and settings.ShowFOV,Active=false,ZIndex=2,
-},screen)
-create('UICorner',{CornerRadius=UDim.new(1,0)},fovCircle)
-create('UIStroke',{Color=color.purple,Transparency=0.43,Thickness=1.5},fovCircle)
-local function refreshFovCircle()
-    local camera=Workspace.CurrentCamera
-    if not camera then return end
-    local v=camera.ViewportSize
-    local diameter=math.min(v.X,v.Y)*settings.FOV*2
-    fovCircle.Size=UDim2.fromOffset(diameter,diameter)
-    -- Both WorldToViewportPoint and ScreenInsets.None use the viewport origin.
-    fovCircle.Position=UDim2.fromOffset(v.X/2,v.Y/2)
-    fovCircle.Visible=settings.Aim and settings.ShowFOV
-end
-local function setFOV(fov)
-    settings.FOV=math.clamp(math.floor(fov+0.5),5,50)/100
-    local percent=math.floor(settings.FOV*100+0.5)
-    local frac=(percent-5)/45
-    fovFill.Size=UDim2.fromScale(frac,1)
-    fovKnob.Position=UDim2.fromScale(frac,0.5)
-    fovValue.Text=tostring(percent)..'%'
-    refreshFovCircle()
-end
-setFOV(settings.FOV*100)
-
-local fovInput=nil
-local function updateFOVFromX(x)
-    local w=fovTrack.AbsoluteSize.X
-    if w<=0 then return end
-    local fraction=math.clamp((x-fovTrack.AbsolutePosition.X)/w,0,1)
-    setFOV(5+fraction*45)
-end
-bind(fovTrack.InputBegan,function(input)
-    if input.UserInputType~=Enum.UserInputType.Touch
-        and input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
-    fovInput=input
-    updateFOVFromX(input.Position.X)
-end)
-bind(UIS.InputChanged,function(input)
-    if not fovInput then return end
-    if fovInput.UserInputType==Enum.UserInputType.Touch then
-        if input~=fovInput then return end
-    elseif input.UserInputType~=Enum.UserInputType.MouseMovement then
-        return
+    local function text(parent, value, x, y, width, height, size, hue, bold)
+        local result = label(parent, value, x, y, width, height, size, hue or color.white)
+        if bold then result.Font = Enum.Font.GothamBold end
+        return result
     end
-    updateFOVFromX(input.Position.X)
-end)
-bind(UIS.InputEnded,function(input)
-    if not fovInput then return end
-    local same=input==fovInput
-    if fovInput.UserInputType==Enum.UserInputType.MouseButton1 then
-        same=input.UserInputType==Enum.UserInputType.MouseButton1
+    local function accentLabel(...)
+        local result = text(...)
+        result.TextColor3 = color.purple
+        table.insert(accentText, result)
+        return result
     end
-    if same then fovInput=nil end
-end)
+    local function button(parent, value, x, y, width, height)
+        local result = create('TextButton', {
+            Text=value, Font=Enum.Font.GothamBold, TextSize=12,
+            TextColor3=color.white, BackgroundColor3=color.panel,
+            Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(width,height),
+            BorderSizePixel=0, Active=true, AutoButtonColor=true,
+        }, parent)
+        corner(result, 10)
+        return result
+    end
+    local function viewport()
+        local camera = Workspace.CurrentCamera
+        return camera and camera.ViewportSize or Vector2.new(800,600)
+    end
+    local function clampWindow(gui)
+        local v, size = viewport(), gui.AbsoluteSize
+        gui.Position = UDim2.fromOffset(
+            math.clamp(gui.Position.X.Offset, 0, math.max(0,v.X-size.X)),
+            math.clamp(gui.Position.Y.Offset, 0, math.max(0,v.Y-size.Y)))
+    end
 
-local statusPanel=create('Frame',{BackgroundColor3=color.panel,BorderSizePixel=0,
-    Position=UDim2.fromOffset(14,409),Size=UDim2.new(1,-28,0,49)},main)
-corner(statusPanel,12)
-local status=label(statusPanel,'ESP: ON  |  AIM: ON',12,3,290,18,12,color.green)
-local count=label(statusPanel,'Adversarios: 0',12,24,300,18,12,color.white)
-local rosterOpenButton=button(statusPanel,'JOGADORES',200,7,102,31,color.purple)
-rosterOpenButton.TextSize=11
-local footer=label(main,'ZYON  •  MOBILE  •  V7',15,H-21,W-30,16,10,color.purple)
-footer.TextXAlignment=Enum.TextXAlignment.Center
+    -- One owning pointer per gesture; a second finger never steals a drag.
+    local function gesture(handle, begin, move, finish)
+        local active
+        local function cancel()
+            if not active then return end
+            active = nil
+            if finish then finish() end
+        end
+        bind(handle.InputBegan, function(input)
+            if active or (input.UserInputType ~= Enum.UserInputType.Touch
+                and input.UserInputType ~= Enum.UserInputType.MouseButton1) then return end
+            if begin(input.Position) == false then return end
+            active = input
+        end)
+        bind(UIS.InputChanged, function(input)
+            if not active then return end
+            if active.UserInputType == Enum.UserInputType.Touch then
+                if input ~= active then return end
+            elseif input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+            move(input.Position)
+        end)
+        bind(UIS.InputEnded, function(input)
+            if active and (input == active or
+                (active.UserInputType == Enum.UserInputType.MouseButton1
+                and input.UserInputType == Enum.UserInputType.MouseButton1)) then cancel() end
+        end)
+        bind(UIS.WindowFocusReleased, cancel)
+        return cancel
+    end
 
--- Roster: when Sniper Duels does not replicate its custom teams to
--- ordinary player fields, manually classify players in the current duel.
--- No need to restart the script and no extra aim button.
-local rosterPanel=create('Frame',{
-    Name='PlayerClassifier',BackgroundColor3=color.bg,
-    BorderSizePixel=0,Size=UDim2.fromScale(1,1),
-    Visible=false,ZIndex=15,Active=true
-},main)
-corner(rosterPanel,19)
-local rosterTitle=label(rosterPanel,'JOGADORES / EQUIPES',17,11,250,32,18,color.purple)
-rosterTitle.ZIndex=16
-rosterTitle.Font=Enum.Font.GothamBold
-local rosterBack=button(rosterPanel,'VOLTAR',W-99,49,84,31,color.panel)
-rosterBack.TextSize=12
-rosterBack.ZIndex=16
-local modeToggle=button(rosterPanel,'MODO: AUTO',15,49,153,31,color.panel)
-modeToggle.TextSize=12
-modeToggle.ZIndex=16
-local rosterHint=label(rosterPanel,'Toque para mudar: AUTO > INIMIGO > ALIADO',15,90,314,36,11,color.muted)
-rosterHint.TextWrapped=true
-rosterHint.ZIndex=16
-local rosterScroll=create('ScrollingFrame',{
-    Name='RosterScroll',BackgroundTransparency=1,BorderSizePixel=0,
-    Position=UDim2.fromOffset(12,132),
-    Size=UDim2.new(1,-24,1,-151),
-    CanvasSize=UDim2.fromOffset(0,0),
-    AutomaticCanvasSize=Enum.AutomaticSize.None,
-    ScrollBarThickness=4,ScrollingDirection=Enum.ScrollingDirection.Y,
-    ScrollBarImageColor3=color.purple,ZIndex=16,
-},rosterPanel)
-local layout=create('UIListLayout',{
-    Padding=UDim.new(0,5),SortOrder=Enum.SortOrder.LayoutOrder
-},rosterScroll)
-local function rebuildRoster()
-    if not hub.Running then return end
-    for _, child in ipairs(rosterScroll:GetChildren()) do
-        if child:IsA('Frame') then child:Destroy() end
+    local main = surface(create('Frame', {
+        Name='Hub', Active=true, BackgroundColor3=color.bg, BorderSizePixel=0,
+        Size=UDim2.fromOffset(W,H), Position=UDim2.fromOffset(18,65), ZIndex=10,
+    }, screen), 18)
+    local scale = create('UIScale', {Scale=1}, main)
+    local header = create('Frame', {BackgroundTransparency=1, Size=UDim2.new(1,0,0,72)}, main)
+    accentLabel(header, 'ZYON', 18,10,145,28,23,color.purple,true)
+    text(header, 'HUB  /  CONTROLE EM TEMPO REAL', 19,40,245,18,9,color.muted)
+    local version = text(header, 'V8', 169,15,36,21,10,color.muted,true)
+    version.TextXAlignment = Enum.TextXAlignment.Center
+    version.BackgroundColor3 = color.panel
+    version.BackgroundTransparency = 0
+    corner(version, 6)
+    local minimize = button(header, '−', W-96,16,36,36)
+    local close = button(header, '×', W-54,16,36,36)
+    minimize.TextSize, close.TextSize = 23, 23
+    close.TextColor3 = color.red
+    local dragArea = button(header, '', 0,0,W-108,68)
+    dragArea.Name = 'DragHeader'
+    dragArea.BackgroundTransparency = 1
+    create('Frame', {BackgroundColor3=color.line, BorderSizePixel=0,
+        Position=UDim2.fromOffset(18,69), Size=UDim2.new(1,-36,0,1)}, main)
+    local tabs = surface(create('Frame', {Name='Tabs', BackgroundColor3=color.bg,
+        BorderSizePixel=0, Position=UDim2.fromOffset(14,80), Size=UDim2.new(1,-28,0,44)}, main), 12)
+    local pages, tabButtons = {}, {}
+    local definitions = {{'aim','GERAL'}, {'fov','FOV'}, {'players','JOGADORES'}, {'appearance','VISUAL'}}
+    for index, definition in ipairs(definitions) do
+        local tab = button(tabs, definition[2], 4+(index-1)*83,4,83,36)
+        tab.TextSize = 10
+        tabButtons[definition[1]] = tab
     end
-    local people={}
-    for _, player in ipairs(Players:GetPlayers()) do
-        if player~=LP then table.insert(people,player) end
+    local footer = text(main, 'ESP ON  ·  AIM ON', 18,H-25,W-36,17,10,color.muted)
+    footer.Position = UDim2.new(0,18,1,-25)
+    local function page(key)
+        local result = create('ScrollingFrame', {
+            Name=key..'Page', BackgroundTransparency=1, BorderSizePixel=0,
+            Position=UDim2.fromOffset(0,136), Size=UDim2.new(1,0,1,-171),
+            CanvasSize=UDim2.fromOffset(0,0), AutomaticCanvasSize=Enum.AutomaticSize.Y,
+            ScrollBarThickness=3, ScrollBarImageColor3=color.purple,
+            ScrollingDirection=Enum.ScrollingDirection.Y, Active=true,
+            Visible=key==activeTab, ClipsDescendants=true,
+        }, main)
+        create('UIPadding', {PaddingLeft=UDim.new(0,14), PaddingRight=UDim.new(0,14),
+            PaddingTop=UDim.new(0,2), PaddingBottom=UDim.new(0,10)}, result)
+        create('UIListLayout', {Padding=UDim.new(0,10), SortOrder=Enum.SortOrder.LayoutOrder}, result)
+        pages[key] = result
+        return result
     end
-    table.sort(people,function(a,b) return a.Name:lower()<b.Name:lower() end)
-    for index, player in ipairs(people) do
-        local row=create('Frame',{
-            BackgroundColor3=color.panel,
-            BackgroundTransparency=settings.HubTransparency,
-            BorderSizePixel=0,
-            Size=UDim2.new(1,-7,0,42),LayoutOrder=index,ZIndex=17,
-        },rosterScroll)
-        corner(row,9)
-        local display=player.DisplayName
-        if #display>18 then display=display:sub(1,17)..'...' end
-        local nameLabel=label(row,display,9,6,183,30,12,color.white)
-        nameLabel.ZIndex=18
-        local relation=hub.Relations[player.UserId]
-        local relationText=relation=='enemy' and 'INIMIGO'
-            or relation=='ally' and 'ALIADO' or 'AUTO'
-        local relationColor=relation=='enemy' and color.red
-            or relation=='ally' and color.green or color.purple
-        local relationButton=button(row,relationText,W-125,5,94,31,relationColor)
-        relationButton.TextSize=12
-        relationButton.ZIndex=18
-        relationButton.Activated:Connect(function()
-            if not hub.Running or player.Parent~=Players then return end
-            local old=hub.Relations[player.UserId]
-            hub.Relations[player.UserId] =
-                old==nil and 'enemy' or old=='enemy' and 'ally' or nil
-            refreshTeamCache()
-            hub.Target=nil
-            -- Remove stale highlights immediately before next ESP cycle.
-            for who in pairs(hub.Highlights) do
-                if not enemy(who) then clearHighlight(who) end
-            end
-            rebuildRoster()
+    local orders = {}
+    local function card(parent, height, plain)
+        orders[parent] = (orders[parent] or 0)+1
+        local result = create('Frame', {BackgroundColor3=color.panel, BorderSizePixel=0,
+            Size=UDim2.new(1,0,0,height), LayoutOrder=orders[parent]}, parent)
+        if plain then result.BackgroundTransparency=1 else surface(result) end
+        return result
+    end
+    local function intro(parent, title, description)
+        local block = card(parent, 46, true)
+        text(block,title,2,0,W-34,23,16,color.white,true)
+        text(block,description,2,26,W-34,18,10,color.muted)
+    end
+    local function toggle(parent, title, description, initial, callback)
+        local block = card(parent, 78)
+        text(block,title,14,10,230,23,13,color.white,true)
+        local detail = text(block,description,14,37,238,30,10,color.muted)
+        detail.TextWrapped = true
+        local control = button(block,'',W-106,19,64,40)
+        local state = initial
+        local function set(value)
+            state = value
+            control.Text = value and 'ON' or 'OFF'
+            control.TextColor3 = value and color.bg or color.muted
+            control.BackgroundColor3 = value and color.green or color.bg
+        end
+        bind(control.Activated, function() callback(not state) end)
+        set(initial)
+        return {set=set,button=control,detail=detail}
+    end
+    local function slider(parent, title, low, high, initial, format, callback)
+        local block = card(parent, 100)
+        text(block,title,14,9,220,23,12,color.white,true)
+        local indicator = accentLabel(block,'',W-124,9,82,23,12,color.purple,true)
+        indicator.TextXAlignment = Enum.TextXAlignment.Right
+        -- The rail is thin, but its actual mouse/touch target is 38 px tall.
+        local hit = button(block,'',16,34,W-60,38)
+        hit.BackgroundTransparency = 1
+        hit.AutoButtonColor = false
+        local rail = create('Frame', {BackgroundColor3=color.bg,BorderSizePixel=0,
+            Position=UDim2.new(0,0,0.5,-3),Size=UDim2.new(1,0,0,6)}, hit)
+        corner(rail,3)
+        local fill = create('Frame', {BackgroundColor3=color.purple,BorderSizePixel=0,
+            Size=UDim2.fromScale(0,1)},rail)
+        corner(fill,3)
+        table.insert(accentFill,fill)
+        local knob = create('Frame', {BackgroundColor3=color.white,BorderSizePixel=0,
+            AnchorPoint=Vector2.new(0.5,0.5),Size=UDim2.fromOffset(18,18)},rail)
+        corner(knob,9)
+        text(block,format(low),16,75,90,15,9,color.muted)
+        local maximum = text(block,format(high),W-134,75,90,15,9,color.muted)
+        maximum.TextXAlignment = Enum.TextXAlignment.Right
+        local enabled = true
+        local function set(value)
+            local fraction = math.clamp((value-low)/(high-low),0,1)
+            fill.Size = UDim2.fromScale(fraction,1)
+            knob.Position = UDim2.fromScale(fraction,0.5)
+            indicator.Text = format(value)
+        end
+        local function fromX(position)
+            if not enabled or hit.AbsoluteSize.X <= 0 then return end
+            local fraction = math.clamp((position.X-hit.AbsolutePosition.X)/hit.AbsoluteSize.X,0,1)
+            local value = math.floor(low+fraction*(high-low)+0.5)
+            set(value)
+            callback(value)
+        end
+        local cancel = gesture(hit, function(position)
+            if not enabled then return false end
+            parent.ScrollingEnabled = false
+            fromX(position)
+            return true
+        end, fromX, function() parent.ScrollingEnabled=true end)
+        set(initial)
+        return {set=set, enable=function(value)
+            enabled=value
+            if not value then cancel() end
+            indicator.TextTransparency=value and 0 or 0.55
+            knob.BackgroundTransparency=value and 0 or 0.55
+            fill.BackgroundTransparency=value and 0 or 0.55
+            hit.Active=value
+        end}
+    end
+    local function percent(value) return string.format('%.0f%%',value) end
+    local function clearTarget() hub.Target=nil end
+
+    local aimPage = page('aim')
+    intro(aimPage,'Visao geral','Acesso rapido aos controles principais.')
+    ui.esp = toggle(aimPage,'ESP de inimigos','Destaca adversarios; respeita os filtros atuais.',settings.ESP,function(value)
+        settings.ESP=value
+        if not value then
+            for player in pairs(hub.Highlights) do clearHighlight(player) end
+        end
+        refresh()
+    end)
+    ui.aim = toggle(aimPage,'Aimbot','Acompanhamento continuo quando ativado.',settings.Aim,function(value)
+        settings.Aim=value
+        clearTarget()
+        refresh()
+    end)
+    slider(aimPage,'SENSIBILIDADE',1,20,settings.Smoothness,
+        function(value) return string.format('%.0f / 20',value) end,
+        function(value) settings.Smoothness=value end)
+    local statusCard = card(aimPage,78)
+    accentLabel(statusCard,'STATUS DA PARTIDA',14,9,260,20,10,color.purple,true)
+    local count = text(statusCard,'Buscando jogadores...',14,34,W-56,32,11,color.muted)
+    count.TextWrapped=true
+    hub.UpdateStatus = function(n, source)
+        count.Text = source=='unknown' and 'Equipe nao detectada. Ajuste na aba Jogadores.'
+            or ('Adversarios: '..n..'  ·  Equipe: '..source)
+    end
+
+    local fovPage = page('fov')
+    intro(fovPage,'Area do FOV','Posicione a area de selecao e trave quando terminar.')
+    ui.lock = toggle(fovPage,'Travar posicao','Desative para arrastar o ponto ou ajustar X / Y.',settings.FOVLocked,
+        function(value) setLocked(value) end)
+    ui.show = toggle(fovPage,'Mostrar circulo','Exibe o limite da area de selecao.',settings.ShowFOV,function(value)
+        settings.ShowFOV=value
+        if not value then setLocked(true) end
+        refresh()
+    end)
+    slider(fovPage,'RAIO DO FOV',5,50,settings.FOV*100,percent,function(value)
+        settings.FOV=value/100
+        clearTarget()
+        refreshFov()
+    end)
+    ui.x = slider(fovPage,'POSICAO HORIZONTAL · X',0,100,settings.FOVX*100,percent,function(value)
+        settings.FOVX=value/100
+        clearTarget()
+        refreshFov()
+    end)
+    ui.y = slider(fovPage,'POSICAO VERTICAL · Y',0,100,settings.FOVY*100,percent,function(value)
+        settings.FOVY=value/100
+        clearTarget()
+        refreshFov()
+    end)
+    local resetCard = card(fovPage,100)
+    ui.center = button(resetCard,'CENTRALIZAR FOV',14,12,W-56,38)
+    local positionHint = text(resetCard,'Destrave a posicao para editar.\nA posicao acompanha o tamanho da tela.',14,57,W-56,32,10,color.muted)
+    positionHint.TextWrapped=true
+    bind(ui.center.Activated,function()
+        if settings.FOVLocked then return end
+        settings.FOVX,settings.FOVY=0.5,0.5
+        clearTarget()
+        refreshFov()
+    end)
+
+    local playersPage = page('players')
+    intro(playersPage,'Jogadores e equipes','Toque no estado: Auto > Inimigo > Aliado.')
+    ui.ffa = toggle(playersPage,'Forcar modo FFA','Use quando a partida nao tiver equipes.',settings.ForceFFA,function(value)
+        settings.ForceFFA=value
+        refreshTeamCache()
+        clearTarget()
+        for player in pairs(hub.Highlights) do
+            if not enemy(player) then clearHighlight(player) end
+        end
+        refresh()
+        rebuildRoster()
+    end)
+    local roster = card(playersPage,0,true)
+    roster.AutomaticSize=Enum.AutomaticSize.Y
+    create('UIListLayout',{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder},roster)
+    rebuildRoster = function()
+        for _,child in ipairs(roster:GetChildren()) do
+            if child:IsA('GuiObject') then child:Destroy() end
+        end
+        local people={}
+        for _,player in ipairs(Players:GetPlayers()) do
+            if player~=LP then table.insert(people,player) end
+        end
+        table.sort(people,function(a,b) return a.Name:lower()<b.Name:lower() end)
+        if #people==0 then
+            local empty=text(roster,'Nenhum outro jogador nesta partida.',14,0,W-56,44,11,color.muted)
+            empty.TextWrapped=true
+        end
+        for index,player in ipairs(people) do
+            -- Dynamic rows are deliberately not retained in the surface registry.
+            local row=create('Frame',{BackgroundColor3=color.panel,
+                BackgroundTransparency=settings.HubTransparency,BorderSizePixel=0,
+                Size=UDim2.new(1,0,0,66),LayoutOrder=index},roster)
+            corner(row,12); stroke(row,color.line,0.25)
+            local name=text(row,player.DisplayName,12,9,W-160,23,12,color.white,true)
+            name.TextTruncate=Enum.TextTruncate.AtEnd
+            local username=text(row,'@'..player.Name,12,34,W-160,18,10,color.muted)
+            username.TextTruncate=Enum.TextTruncate.AtEnd
+            local relation=hub.Relations[player.UserId]
+            local control=button(row,relation=='enemy' and 'INIMIGO' or relation=='ally' and 'ALIADO' or 'AUTO',W-132,13,92,40)
+            control.BackgroundColor3=color.bg
+            control.TextColor3=relation=='enemy' and color.red or relation=='ally' and color.green or color.muted
+            control.Activated:Connect(function()
+                if not hub.Running or player.Parent~=Players then return end
+                local old=hub.Relations[player.UserId]
+                hub.Relations[player.UserId]=old==nil and 'enemy' or old=='enemy' and 'ally' or nil
+                refreshTeamCache()
+                clearTarget()
+                for who in pairs(hub.Highlights) do
+                    if not enemy(who) then clearHighlight(who) end
+                end
+                rebuildRoster()
+            end)
+        end
+    end
+    bind(Players.PlayerAdded,function()
+        if activeTab=='players' then rebuildRoster() end
+    end)
+    bind(Players.PlayerRemoving,function()
+        task.defer(function()
+            if hub.Running and activeTab=='players' then rebuildRoster() end
+        end)
+    end)
+
+    local appearancePage=page('appearance')
+    intro(appearancePage,'Do seu jeito','Cores e transparencias em um so lugar.')
+    local palette=card(appearancePage,91)
+    text(palette,'COR DE DESTAQUE',14,9,260,23,12,color.white,true)
+    local themes={
+        {'ROXO',Color3.fromRGB(165,132,255)}, {'VERDE',Color3.fromRGB(74,222,151)},
+        {'AZUL',Color3.fromRGB(83,185,255)}, {'ROSA',Color3.fromRGB(255,128,190)},
+    }
+    local themeButtons={}
+    local function applyTabs()
+        for key,tab in pairs(tabButtons) do
+            tab.BackgroundColor3=key==activeTab and color.purple or color.bg
+            tab.TextColor3=key==activeTab and color.bg or color.muted
+        end
+    end
+    local function setAccent(chosen)
+        color.purple=chosen
+        for _,object in ipairs(accentText) do object.TextColor3=chosen end
+        for _,object in ipairs(accentFill) do object.BackgroundColor3=chosen end
+        for _,object in ipairs(accentStroke) do object.Color=chosen end
+        for _,object in pairs(pages) do object.ScrollBarImageColor3=chosen end
+        for index,entry in ipairs(themeButtons) do
+            entry.mark.Transparency=themes[index][2]==chosen and 0 or 1
+            entry.button.Text=themes[index][2]==chosen and ('• '..themes[index][1]) or themes[index][1]
+        end
+        applyTabs()
+    end
+    for index,theme in ipairs(themes) do
+        local control=button(palette,theme[1],14+(index-1)*79,40,75,38)
+        control.BackgroundColor3=theme[2]
+        control.TextColor3=color.bg
+        control.TextSize=10
+        themeButtons[index]={button=control,mark=stroke(control,color.white,1)}
+        bind(control.Activated,function() setAccent(theme[2]) end)
+    end
+    local function applyTransparency()
+        for _,object in ipairs(surfaces) do object.BackgroundTransparency=settings.HubTransparency end
+        for _,object in ipairs(roster:GetChildren()) do
+            if object:IsA('Frame') then object.BackgroundTransparency=settings.HubTransparency end
+        end
+    end
+    slider(appearancePage,'TRANSPARENCIA DO HUB',0,85,settings.HubTransparency*100,percent,function(value)
+        settings.HubTransparency=value/100
+        applyTransparency()
+    end)
+    slider(appearancePage,'TRANSPARENCIA DO ESP',0,95,settings.FillTransparency*100,percent,function(value)
+        settings.FillTransparency=value/100
+        for _,highlight in pairs(hub.Highlights) do highlight.FillTransparency=settings.FillTransparency end
+    end)
+    local tip=card(appearancePage,65,true)
+    local tipText=text(tip,'Arraste o cabecalho para mover o Hub.\nUse − para recolher e toque em Z para reabrir.\nShift direito: recolher / abrir. Esc: travar FOV.',2,0,W-34,65,10,color.muted)
+    tipText.TextWrapped=true
+
+    -- The guide never captures gameplay input. Only the edit handle does.
+    local circle=create('Frame',{Name='FovGuide',BackgroundTransparency=1,
+        BorderSizePixel=0,AnchorPoint=Vector2.new(0.5,0.5),Active=false,ZIndex=2},screen)
+    corner(circle,10000)
+    local circleStroke=stroke(circle,color.purple,0.25)
+    circleStroke.Thickness=1.5
+    table.insert(accentStroke,circleStroke)
+    local handle=button(screen,'+',0,0,48,48)
+    handle.Name='FovDragHandle'
+    handle.TextSize=28
+    handle.BackgroundColor3=color.bg
+    handle.BackgroundTransparency=0.1
+    handle.ZIndex=5
+    corner(handle,24)
+    table.insert(accentStroke,stroke(handle,color.purple,0))
+    table.insert(accentText,handle)
+    local editBar=surface(create('Frame',{Name='FovEditBar',BackgroundColor3=color.bg,
+        BorderSizePixel=0,AnchorPoint=Vector2.new(0.5,1),Position=UDim2.new(0.5,0,1,-12),
+        Size=UDim2.fromOffset(308,48),ZIndex=40},screen),12)
+    local editScale=create('UIScale',{Scale=1},editBar)
+    text(editBar,'FOV LIVRE',12,5,182,18,11,color.white,true)
+    text(editBar,'Arraste o + · a mira esta pausada',12,25,190,15,9,color.muted)
+    local lockNow=button(editBar,'TRAVAR',216,6,84,36)
+    lockNow.BackgroundColor3=color.green
+    lockNow.TextColor3=color.bg
+    bind(lockNow.Activated,function() setLocked(true) end)
+
+    local bubble=button(screen,'Z',16,130,52,52)
+    bubble.Name='CollapsedHub'
+    bubble.TextSize=22
+    bubble.ZIndex=30
+    bubble.Visible=false
+    surface(bubble,18)
+    table.insert(accentText,bubble)
+    table.insert(accentStroke,stroke(bubble,color.purple,0.25))
+    local bubbleScale=create('UIScale',{Scale=1},bubble)
+    refreshFov=function()
+        local v=viewport()
+        local center=fovCenter(v)
+        local diameter=math.min(v.X,v.Y)*settings.FOV*2
+        local editing=not settings.FOVLocked
+        circle.Size=UDim2.fromOffset(diameter,diameter)
+        circle.Position=UDim2.fromOffset(center.X,center.Y)
+        circle.Visible=editing or (settings.Aim and settings.ShowFOV)
+        circleStroke.Transparency=editing and 0 or 0.25
+        -- Keep the handle reachable even when the center is on a screen edge.
+        handle.Position=UDim2.fromOffset(math.clamp(center.X-24,0,math.max(0,v.X-48)),
+            math.clamp(center.Y-24,0,math.max(0,v.Y-48)))
+        handle.Visible=editing
+        editBar.Visible=editing
+        ui.x.set(settings.FOVX*100)
+        ui.y.set(settings.FOVY*100)
+    end
+    local cancelFovDrag
+    setLocked=function(value)
+        if cancelFovDrag then cancelFovDrag() end
+        settings.FOVLocked=value
+        if not value then settings.ShowFOV=true end
+        clearTarget()
+        ui.lock.set(value)
+        ui.lock.detail.Text=value and 'Desative para arrastar o ponto ou ajustar X / Y.'
+            or 'Posicao livre. A mira fica pausada durante o ajuste.'
+        ui.x.enable(not value)
+        ui.y.enable(not value)
+        ui.center.Active=not value
+        ui.center.AutoButtonColor=not value
+        ui.center.TextTransparency=value and 0.55 or 0
+        positionHint.Text=value and 'Destrave a posicao para editar.\nA posicao acompanha o tamanho da tela.'
+            or '0% = esquerda / topo; 100% = direita / base.\nUse TRAVAR ao terminar o ajuste.'
+        refresh()
+    end
+    local startPointer,startCenter
+    cancelFovDrag=gesture(handle,function(position)
+        if settings.FOVLocked then return false end
+        startPointer=Vector2.new(position.X,position.Y)
+        startCenter=fovCenter(viewport())
+        return true
+    end,function(position)
+        if settings.FOVLocked then return end
+        local v=viewport()
+        if v.X<=0 or v.Y<=0 then return end
+        local moved=startCenter+Vector2.new(position.X,position.Y)-startPointer
+        settings.FOVX=math.clamp(moved.X/v.X,0,1)
+        settings.FOVY=math.clamp(moved.Y/v.Y,0,1)
+        clearTarget()
+        refreshFov()
+    end)
+    refresh=function()
+        ui.esp.set(settings.ESP)
+        ui.aim.set(settings.Aim)
+        ui.show.set(settings.ShowFOV)
+        ui.ffa.set(settings.ForceFFA)
+        footer.Text='ESP '..(settings.ESP and 'ON' or 'OFF')..'  ·  AIM '..
+            (not settings.FOVLocked and 'PAUSADO' or settings.Aim and 'ON' or 'OFF')..
+            '  ·  FOV '..(settings.FOVLocked and 'TRAVADO' or 'LIVRE')
+        refreshFov()
+    end
+    for _,definition in ipairs(definitions) do
+        local key=definition[1]
+        bind(tabButtons[key].Activated,function()
+            activeTab=key
+            for name,object in pairs(pages) do object.Visible=name==key end
+            applyTabs()
+            if key=='players' then rebuildRoster() end
         end)
     end
-    rosterScroll.CanvasSize=UDim2.fromOffset(0,#people*47+4)
-end
-bind(rosterOpenButton.Activated,function()
-    rosterPanel.Visible=true
-    rebuildRoster()
-end)
-bind(rosterBack.Activated,function()
-    rosterPanel.Visible=false
-end)
-bind(modeToggle.Activated,function()
-    settings.ForceFFA=not settings.ForceFFA
-    modeToggle.Text=settings.ForceFFA and 'MODO: FFA' or 'MODO: AUTO'
-    refreshTeamCache()
-    hub.Target=nil
-    for who in pairs(hub.Highlights) do
-        if not enemy(who) then clearHighlight(who) end
+
+    local firstLayout=true
+    resize=function()
+        if not hub.Running then return end
+        cancelFovDrag()
+        local v=viewport()
+        -- Keep readable text in landscape: shorten the scrolling window first.
+        local factor=math.max(0.1,math.min(1,(v.X-24)/W,(v.Y-24)/300))
+        H=math.clamp((v.Y-24)/factor,300,540)
+        scale.Scale=factor
+        main.Size=UDim2.fromOffset(W,H)
+        editScale.Scale=math.max(0.1,math.min(1,(v.X-16)/308))
+        bubbleScale.Scale=math.max(0.1,math.min(1,math.min(v.X,v.Y)/100))
+        if firstLayout then
+            main.Position=UDim2.fromOffset(math.max(0,(v.X-W*factor)*0.5),
+                math.max(0,(v.Y-H*factor)*0.5))
+            firstLayout=false
+        end
+        clampWindow(main)
+        clampWindow(bubble)
+        refreshFov()
     end
-    rebuildRoster()
-end)
-bind(Players.PlayerAdded,function()
-    if rosterPanel.Visible then rebuildRoster() end
-end)
-bind(Players.PlayerRemoving,function()
-    if rosterPanel.Visible then rebuildRoster() end
-end)
-
-local bubble=button(screen,'◈',12,130,58,58,color.panel)
-bubble.Name='CollapsedHub'; bubble.TextSize=30; bubble.Visible=false
-bubble.ZIndex=30
-corner(bubble,21); outline(bubble)
-local bubbleScale=create('UIScale',{Scale=1},bubble)
--- ---------- Three-tab layout ----------
-local tabs=create('Frame',{
-    Name='TabBar',BackgroundTransparency=1,
-    Position=UDim2.fromOffset(13,59),Size=UDim2.new(1,-26,0,36),
-    ZIndex=8
-},main)
-local tabSettings=button(tabs,'ESP / AIM',0,0,102,34,color.purple)
-local tabPlayers=button(tabs,'JOGADORES',110,0,102,34,color.panel)
-local tabAppearance=button(tabs,'APARENCIA',220,0,104,34,color.panel)
-for _,btn in ipairs({tabSettings,tabPlayers,tabAppearance}) do
-    btn.TextSize=12
-    btn.ZIndex=9
-end
-
-local settingsPage=create('ScrollingFrame',{
-    Name='SettingsPage',BackgroundTransparency=1,BorderSizePixel=0,
-    Position=UDim2.fromOffset(0,100),Size=UDim2.new(1,0,1,-122),
-    CanvasSize=UDim2.fromOffset(0,388),
-    ScrollBarThickness=3,ScrollBarImageColor3=color.purple,
-    ScrollingDirection=Enum.ScrollingDirection.Y,
-    Visible=true,Active=true,ZIndex=6
-},main)
-local function reparentSettings(obj,y)
-    obj.Parent=settingsPage
-    obj.Position=UDim2.fromOffset(14,y)
-end
-reparentSettings(espCard,0)
-reparentSettings(aimCard,70)
-reparentSettings(sensitivityCard,142)
-reparentSettings(fovCard,237)
-reparentSettings(statusPanel,329)
-statusPanel.Size=UDim2.new(1,-28,0,45)
-rosterOpenButton:Destroy()
-rosterPanel.Position=UDim2.fromOffset(0,100)
-rosterPanel.Size=UDim2.new(1,0,1,-122)
-rosterPanel.BackgroundTransparency=1
-rosterTitle.Position=UDim2.fromOffset(16,3)
-rosterTitle.TextSize=16
-rosterBack:Destroy()
-modeToggle.Position=UDim2.fromOffset(16,40)
-rosterHint.Position=UDim2.fromOffset(16,78)
-rosterScroll.Position=UDim2.fromOffset(12,116)
-rosterScroll.Size=UDim2.new(1,-24,1,-124)
-rosterScroll.ScrollBarThickness=4
-
-local appearancePage=create('ScrollingFrame',{
-    Name='AppearancePage',BackgroundTransparency=1,BorderSizePixel=0,
-    Position=UDim2.fromOffset(0,100),Size=UDim2.new(1,0,1,-122),
-    CanvasSize=UDim2.fromOffset(0,435),
-    ScrollBarThickness=3,ScrollBarImageColor3=color.purple,
-    ScrollingDirection=Enum.ScrollingDirection.Y,
-    Visible=false,Active=true,ZIndex=6,
-},main)
-local colorCard=create('Frame',{
-    Name='AccentColors',BackgroundColor3=color.panel,
-    BorderSizePixel=0,Position=UDim2.fromOffset(14,3),
-    Size=UDim2.new(1,-28,0,94),
-},appearancePage)
-corner(colorCard,12)
-local themeTitle=label(colorCard,'COR DO HUB',12,7,270,26,14,color.white)
-themeTitle.Font=Enum.Font.GothamBold
-local themeNames={'ROXO','VERDE','AZUL','ROSA'}
-local themeColors={
-    Color3.fromRGB(151,99,255),
-    Color3.fromRGB(40,210,126),
-    Color3.fromRGB(42,179,255),
-    Color3.fromRGB(255,91,174)
-}
-local themeButtons={}
-for i=1,4 do
-    local btn=button(colorCard,themeNames[i],12+(i-1)*76,42,69,34,themeColors[i])
-    btn.TextSize=11
-    btn.TextColor3=color.bg
-    themeButtons[i]=btn
-end
-
-local appearanceCards={colorCard}
-local function makeAppearanceSlider(title,y,minVal,maxVal,initial,onUpdate)
-    local card=create('Frame',{
-        BackgroundColor3=color.panel,BorderSizePixel=0,
-        Position=UDim2.fromOffset(14,y),
-        Size=UDim2.new(1,-28,0,95)
-    },appearancePage)
-    corner(card,12)
-    table.insert(appearanceCards,card)
-    local caption=label(card,title,12,7,232,25,13,color.white)
-    caption.Font=Enum.Font.GothamBold
-    local indicator=label(card,'',246,7,57,25,13,color.purple)
-    indicator.Font=Enum.Font.GothamBold
-    indicator.TextXAlignment=Enum.TextXAlignment.Right
-    local track=create('TextButton',{
-        Text='',BackgroundColor3=color.bg,BorderSizePixel=0,
-        AutoButtonColor=false,Active=true,
-        Position=UDim2.fromOffset(16,43),
-        Size=UDim2.new(1,-32,0,12),
-    },card)
-    corner(track,6)
-    local fill=create('Frame',{
-        BackgroundColor3=color.purple,BorderSizePixel=0,
-        Size=UDim2.fromScale(0,1)
-    },track)
-    corner(fill,6)
-    local knob=create('Frame',{
-        BackgroundColor3=color.white,BorderSizePixel=0,
-        Size=UDim2.fromOffset(18,18),
-        AnchorPoint=Vector2.new(0.5,0.5),
-        Position=UDim2.fromScale(0,0.5)
-    },track)
-    corner(knob,9)
-    local left=label(card,'0%',16,65,76,18,10,color.muted)
-    local right=label(card,tostring(maxVal)..'%',210,65,90,18,10,color.muted)
-    right.TextXAlignment=Enum.TextXAlignment.Right
-    local function update(value)
-        value=math.clamp(math.floor(value+0.5),minVal,maxVal)
-        local fraction=(value-minVal)/(maxVal-minVal)
-        fill.Size=UDim2.fromScale(fraction,1)
-        knob.Position=UDim2.fromScale(fraction,0.5)
-        indicator.Text=tostring(value)..'%'
-        onUpdate(value)
+    local viewportConnection
+    local function watchCamera()
+        if viewportConnection then viewportConnection:Disconnect() end
+        local camera=Workspace.CurrentCamera
+        if camera then viewportConnection=bind(camera:GetPropertyChangedSignal('ViewportSize'),resize) end
+        resize()
     end
-    local active=nil
-    local function fromX(x)
-        local width=track.AbsoluteSize.X
-        if width<=0 then return end
-        local f=math.clamp((x-track.AbsolutePosition.X)/width,0,1)
-        update(minVal+f*(maxVal-minVal))
+    bind(Workspace:GetPropertyChangedSignal('CurrentCamera'),watchCamera)
+    local function draggable(control,window,onMoved)
+        local pointer,origin,moved
+        gesture(control,function(position)
+            pointer=position
+            origin=window.Position
+            moved=false
+        end,function(position)
+            local delta=position-pointer
+            if delta.Magnitude>7 then moved=true end
+            if not moved then return end
+            window.Position=UDim2.fromOffset(origin.X.Offset+delta.X,origin.Y.Offset+delta.Y)
+            clampWindow(window)
+            if onMoved then onMoved() end
+        end)
     end
-    bind(track.InputBegan,function(input)
-        if input.UserInputType~=Enum.UserInputType.MouseButton1
-            and input.UserInputType~=Enum.UserInputType.Touch then return end
-        active=input
-        fromX(input.Position.X)
+    draggable(dragArea,main)
+    local lastBubbleDrag=-math.huge
+    local bubblePositionSaved=false
+    draggable(bubble,bubble,function()
+        lastBubbleDrag=os.clock()
+        bubblePositionSaved=true
     end)
-    bind(UIS.InputChanged,function(input)
-        if not active then return end
-        if active.UserInputType==Enum.UserInputType.Touch then
-            if input~=active then return end
-        elseif input.UserInputType~=Enum.UserInputType.MouseMovement then
-            return
-        end
-        fromX(input.Position.X)
+    local function minimizeHub(value)
+        hub.Minimized=value
+        if value and not bubblePositionSaved then bubble.Position=main.Position end
+        main.Visible=not value
+        bubble.Visible=value
+        resize()
+    end
+    bind(minimize.Activated,function() minimizeHub(true) end)
+    bind(bubble.Activated,function()
+        if os.clock()-lastBubbleDrag>=0.25 then minimizeHub(false) end
     end)
-    bind(UIS.InputEnded,function(input)
-        if not active then return end
-        if input==active or (active.UserInputType==Enum.UserInputType.MouseButton1
-            and input.UserInputType==Enum.UserInputType.MouseButton1) then
-            active=nil
-        end
+    bind(close.Activated,function() hub.Stop() end)
+    bind(UIS.InputBegan,function(input,processed)
+        if processed or UIS:GetFocusedTextBox() then return end
+        if input.KeyCode==Enum.KeyCode.RightShift then minimizeHub(not hub.Minimized)
+        elseif input.KeyCode==Enum.KeyCode.Escape and not settings.FOVLocked then setLocked(true) end
     end)
-    update(initial)
-    return {card=card,fill=fill,indicator=indicator}
-end
-
-local function applyWindowTransparency()
-    for _,object in ipairs({
-        main,espCard,aimCard,sensitivityCard,fovCard,statusPanel,
-        bubble,colorCard
-    }) do
-        if object then object.BackgroundTransparency=settings.HubTransparency end
-    end
-    for _,card in ipairs(appearanceCards) do
-        card.BackgroundTransparency=settings.HubTransparency
-    end
-    for _,object in ipairs(rosterScroll:GetChildren()) do
-        if object:IsA('Frame') then
-            object.BackgroundTransparency=settings.HubTransparency
-        end
-    end
-end
-local opacityControl=makeAppearanceSlider(
-    'TRANSPARENCIA DO HUB',109,0,85,
-    math.floor(settings.HubTransparency*100+0.5),
-    function(value)
-        settings.HubTransparency=value/100
-        applyWindowTransparency()
-    end
-)
-local espOpacityControl=makeAppearanceSlider(
-    'TRANSPARENCIA DO ESP',215,0,95,
-    math.floor(settings.FillTransparency*100+0.5),
-    function(value)
-        settings.FillTransparency=value/100
-        for _,highlight in pairs(hub.Highlights) do
-            highlight.FillTransparency=settings.FillTransparency
-        end
-    end
-)
-
-local circleCard=create('Frame',{
-    BackgroundColor3=color.panel,BorderSizePixel=0,
-    Position=UDim2.fromOffset(14,322),
-    Size=UDim2.new(1,-28,0,62),
-},appearancePage)
-corner(circleCard,12)
-table.insert(appearanceCards,circleCard)
-local circleLabel=label(circleCard,'MOSTRAR CIRCULO FOV',12,13,220,32,13,color.white)
-circleLabel.Font=Enum.Font.GothamBold
-local circleSwitch=button(circleCard,'ON',W-89,14,49,31,color.green)
-circleSwitch.TextSize=12
-circleSwitch.TextColor3=color.bg
-bind(circleSwitch.Activated,function()
-    settings.ShowFOV=not settings.ShowFOV
-    circleSwitch.Text=settings.ShowFOV and 'ON' or 'OFF'
-    circleSwitch.BackgroundColor3=settings.ShowFOV and color.green or color.red
-    refreshFovCircle()
-end)
-
-local function setAccent(chosen)
-    color.purple=chosen
-    for _,textObj in ipairs({heading,footer,sensitivityValue,fovValue,
-        opacityControl.indicator,espOpacityControl.indicator}) do
-        textObj.TextColor3=chosen
-    end
-    for _,fill in ipairs({sensitivityFill,fovFill,
-        opacityControl.fill,espOpacityControl.fill}) do
-        fill.BackgroundColor3=chosen
-    end
-    local mainStroke=main:FindFirstChildOfClass('UIStroke')
-    local bubbleStroke=bubble:FindFirstChildOfClass('UIStroke')
-    local circleStroke=fovCircle:FindFirstChildOfClass('UIStroke')
-    if mainStroke then mainStroke.Color=chosen end
-    if bubbleStroke then bubbleStroke.Color=chosen end
-    if circleStroke then circleStroke.Color=chosen end
-    tabs.BackgroundColor3=chosen
-    settingsPage.ScrollBarImageColor3=chosen
-    appearancePage.ScrollBarImageColor3=chosen
-    rosterScroll.ScrollBarImageColor3=chosen
-    for i,buttonObj in ipairs(themeButtons) do
-        local mark=buttonObj:FindFirstChildOfClass('UIStroke')
-        if not mark then mark=create('UIStroke',{Thickness=1.5},buttonObj) end
-        mark.Color=color.white
-        mark.Transparency=(themeColors[i]==chosen) and 0 or 1
-    end
-    local selected=tabSettings
-    if rosterPanel.Visible then selected=tabPlayers end
-    if appearancePage.Visible then selected=tabAppearance end
-    selected.BackgroundColor3=chosen
-end
-for i,buttonObj in ipairs(themeButtons) do
-    bind(buttonObj.Activated,function() setAccent(themeColors[i]) end)
-end
-
-local function showTab(which)
-    settingsPage.Visible=which=='settings'
-    rosterPanel.Visible=which=='players'
-    appearancePage.Visible=which=='appearance'
-    for _,entry in ipairs({
-        {tabSettings,'settings'},
-        {tabPlayers,'players'},
-        {tabAppearance,'appearance'}
-    }) do
-        entry[1].BackgroundColor3=
-            entry[2]==which and color.purple or color.panel
-    end
-    if which=='players' then rebuildRoster() end
-    if which=='appearance' then applyWindowTransparency() end
-end
-bind(tabSettings.Activated,function() showTab('settings') end)
-bind(tabPlayers.Activated,function() showTab('players') end)
-bind(tabAppearance.Activated,function() showTab('appearance') end)
-showTab('settings')
-setAccent(color.purple)
-applyWindowTransparency()
-
-local viewportConnection
-local firstLayout=true
-local function viewport()
-    local cam=Workspace.CurrentCamera
-    return cam and cam.ViewportSize or Vector2.new(800,600)
-end
-local function clampPosition(gui,ww,hh)
-    local v=viewport()
-    gui.Position=UDim2.fromOffset(
-        math.clamp(gui.Position.X.Offset,0,math.max(0,v.X-ww)),
-        math.clamp(gui.Position.Y.Offset,0,math.max(0,v.Y-hh)))
-end
-local function resize()
-    if not hub.Running then return end
-    local v=viewport()
-    local scale=math.min(1,(v.X-24)/W,(v.Y-24)/H)
-    scale=math.max(0.1,scale)
-    mainScale.Scale=scale
-    refreshFovCircle()
-    if firstLayout then
-        main.Position=UDim2.fromOffset(math.max(0,(v.X-W*scale)*0.5),
-            math.max(0,(v.Y-H*scale)*0.5))
-        firstLayout=false
-    end
-    clampPosition(main,W*scale,H*scale)
-    local mini=math.min(1,math.max(0.1,math.min(v.X,v.Y)/250))
-    bubbleScale.Scale=mini
-    clampPosition(bubble,58*mini,58*mini)
-end
-local function watchCamera()
-    if viewportConnection then viewportConnection:Disconnect() end
-    local camera=Workspace.CurrentCamera
-    if camera then
-        viewportConnection=bind(camera:GetPropertyChangedSignal('ViewportSize'),resize)
-    end
-    resize()
-end
-bind(Workspace:GetPropertyChangedSignal('CurrentCamera'),watchCamera)
-watchCamera()
-
-local function draggable(handle, gui, afterMove)
-    local inputStart, positionStart, activeInput
-    local dragging,moved=false,false
-    bind(handle.InputBegan,function(input)
-        if input.UserInputType~=Enum.UserInputType.Touch and
-            input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
-        activeInput=input; inputStart=input.Position
-        positionStart=gui.Position; dragging=true; moved=false
+    bind(UIS.WindowFocusReleased,function()
+        if not settings.FOVLocked then setLocked(true) end
     end)
-    bind(UIS.InputChanged,function(input)
-        if not dragging or not activeInput then return end
-        if activeInput.UserInputType==Enum.UserInputType.Touch then
-            if input~=activeInput then return end
-        elseif input.UserInputType~=Enum.UserInputType.MouseMovement then
-            return
-        end
-        local delta=input.Position-inputStart
-        if delta.Magnitude>7 then moved=true end
-        if not moved then return end
-        gui.Position=UDim2.fromOffset(
-            positionStart.X.Offset+delta.X,positionStart.Y.Offset+delta.Y)
-        clampPosition(gui,gui.AbsoluteSize.X,gui.AbsoluteSize.Y)
-    end)
-    bind(UIS.InputEnded,function(input)
-        if not dragging or not activeInput then return end
-        local match=input==activeInput
-        if activeInput.UserInputType==Enum.UserInputType.MouseButton1 then
-            match=input.UserInputType==Enum.UserInputType.MouseButton1
-        end
-        if match then
-            dragging=false; activeInput=nil
-            if moved and afterMove then afterMove() end
-        end
-    end)
+    setAccent(color.purple)
+    setLocked(settings.FOVLocked)
+    watchCamera()
 end
-draggable(dragArea,main)
-local lastDrag=-math.huge
-local bubblePositionSaved=false
-draggable(bubble,bubble,function()
-    lastDrag=os.clock()
-    bubblePositionSaved=true
-end)
-local function minimized(value)
-    hub.Minimized=value
-    if value then
-        if not bubblePositionSaved then
-            bubble.Position=main.Position
-        end
-        main.Visible=false
-        bubble.Visible=true
-    else
-        -- The main window keeps its own dragged position.
-        main.Visible=true
-        bubble.Visible=false
-    end
-    resize()
-end
-bind(minus.Activated,function() minimized(true) end)
-bind(bubble.Activated,function()
-    if os.clock()-lastDrag>=0.25 then minimized(false) end
-end)
 
 local elapsed=settings.TargetInterval
-local function refresh()
-    refreshFovCircle()
-    espSwitch.Text=settings.ESP and 'ON' or 'OFF'
-    espSwitch.BackgroundColor3=settings.ESP and color.green or color.red
-    aimSwitch.Text=settings.Aim and 'ON' or 'OFF'
-    aimSwitch.BackgroundColor3=settings.Aim and color.green or color.red
-    status.Text='ESP: '..(settings.ESP and 'ON' or 'OFF')..
-        '  |  AIM: '..(settings.Aim and 'ON' or 'OFF')
-    status.TextColor3=(settings.ESP or settings.Aim) and color.green or color.muted
-end
-bind(espSwitch.Activated,function()
-    settings.ESP=not settings.ESP
-    if not settings.ESP then
-        for player in pairs(hub.Highlights) do clearHighlight(player) end
-    end
-    refresh()
-end)
-bind(aimSwitch.Activated,function()
-    settings.Aim=not settings.Aim
-    hub.Target=nil
-    elapsed=settings.TargetInterval
-    refresh()
-end)
-local renderKey='ZYON_SMOOTH_AIM_V7'
+local renderKey='ZYON_SMOOTH_AIM_V8'
 RunService:BindToRenderStep(renderKey,Enum.RenderPriority.Camera.Value+1,function(dt)
-    if not hub.Running or not settings.Aim then return end
+    if not hub.Running or not settings.Aim or not settings.FOVLocked then return end
     local camera=Workspace.CurrentCamera
     if not camera or camera.CameraType==Enum.CameraType.Scriptable then return end
     elapsed=elapsed+dt
@@ -1092,10 +955,7 @@ task.spawn(function()
             if updateHighlight(player) then n=n+1 end
         end
         if hub.Running then
-            count.Text='Adversarios: '..n..' | Time: '..teamSource
-            if teamSource=='unknown' then
-                count.Text='Equipe nao detectada: use JOGADORES'
-            end
+            hub.UpdateStatus(n,teamSource)
         end
         task.wait(settings.ESPInterval)
     end
@@ -1109,9 +969,7 @@ function hub.Stop()
         connection:Disconnect()
     end
     for player in pairs(hub.Highlights) do clearHighlight(player) end
-    screen:Destroy()
+    hub.Screen:Destroy()
     if env.ZyonHub==hub then env.ZyonHub=nil end
 end
-bind(close.Activated,hub.Stop)
-refresh()
-print('[ZYON] Hub v7 | abas, FOV alinhado, aparencia e arraste livre')
+print('[ZYON] Hub v8 | interface responsiva, FOV movel e trava de posicao')
