@@ -1,886 +1,404 @@
---[[
-    ZYON ESP HUB v2
-    Mobile | Enemy ESP | Smooth Aim
-    Team Filter | Friends Filter
-]]
+-- ZYON HUB v3 | Roblox Luau | Mobile
+-- Enemy ESP, friends/team exclusion, smooth aim, responsive collapsible GUI
 
-local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
-local UIS = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
-
+local Players = game:GetService('Players')
+local RunService = game:GetService('RunService')
+local UIS = game:GetService('UserInputService')
+local Workspace = game:GetService('Workspace')
 local LP = Players.LocalPlayer
-local PlayerGui = LP:WaitForChild("PlayerGui")
-
-local ENV = (type(getgenv) == "function"
-    and getgenv()) or _G
-
--- Desativa instâncias anteriores do mesmo Hub
-if ENV.ZyonHub and ENV.ZyonHub.Stop then
-    ENV.ZyonHub.Stop()
+assert(LP, 'This script must run on the client')
+local PlayerGui = LP:WaitForChild('PlayerGui')
+local env = (type(getgenv) == 'function' and getgenv()) or _G
+if env.ZyonHub and type(env.ZyonHub.Stop) == 'function' then
+    pcall(env.ZyonHub.Stop)
 end
 
-local SETTINGS = {
-    ESP = true,
-    Aim = true,
-
-    -- Intensidade do acompanhamento
-    Smoothness = 9,
-
-    -- Percentual da menor dimensão da tela
-    FOV = 0.23,
-
-    -- Alcance máximo em studs
-    MaxDistance = 350,
-
-    -- Intervalos de atualização
-    ESPInterval = 0.25,
-    TargetInterval = 0.10,
-
-    -- Verificar obstáculos antes de mirar
-    VisibleOnly = true,
-
-    -- Excluir amigos do Roblox
-    IgnoreFriends = true,
-
-    -- Excluir companheiros de equipe
-    IgnoreTeam = true
+local settings = {
+    ESP = true, Aim = true, IgnoreFriends = true, IgnoreTeam = true,
+    VisibleOnly = true, Smoothness = 9, FOV = 0.23,
+    MaxDistance = 350, ESPInterval = 0.3, TargetInterval = 0.12,
 }
-
-local C = {
-    BG = Color3.fromRGB(15, 17, 25),
-    Panel = Color3.fromRGB(29, 30, 43),
-    Purple = Color3.fromRGB(151, 99, 255),
-    Green = Color3.fromRGB(40, 210, 126),
-    Red = Color3.fromRGB(255, 54, 72),
-    White = Color3.fromRGB(242, 241, 252),
-    Muted = Color3.fromRGB(160, 160, 178)
+local color = {
+    bg = Color3.fromRGB(15,17,25), panel = Color3.fromRGB(29,30,43),
+    purple = Color3.fromRGB(151,99,255), green = Color3.fromRGB(40,210,126),
+    red = Color3.fromRGB(255,54,72), white = Color3.fromRGB(242,241,252),
+    muted = Color3.fromRGB(160,160,178)
 }
+local hub = {Running=true, Minimized=false, HoldingAim=false, Target=nil,
+    Friends={}, Highlights={}, Connections={}}
+env.ZyonHub = hub
 
-local Hub = {
-    Running = true,
-    Minimized = false,
-    HoldingAim = false,
-    Target = nil,
-    Highlights = {},
-    Friends = {},
-    Connections = {}
-}
-
-ENV.ZyonHub = Hub
-
-local function Connect(signal, callback)
-    local conn = signal:Connect(callback)
-    table.insert(Hub.Connections, conn)
-    return conn
+local function bind(signal, callback)
+    local connection = signal:Connect(callback)
+    table.insert(hub.Connections, connection)
+    return connection
 end
-
-local function New(class, props, parent)
+local function create(class, props, parent)
     local obj = Instance.new(class)
-
-    for k, v in pairs(props) do
-        obj[k] = v
-    end
-
+    for property, value in pairs(props) do obj[property] = value end
     obj.Parent = parent
     return obj
 end
-
-local function Round(obj, radius)
-    New("UICorner", {
-        CornerRadius = UDim.new(0, radius)
-    }, obj)
+local function corner(obj, radius)
+    create('UICorner', {CornerRadius=UDim.new(0,radius)}, obj)
+end
+local function outline(obj)
+    create('UIStroke', {Color=color.purple, Transparency=0.3, Thickness=1.5}, obj)
+end
+local function label(parent, text, x,y,w,h,size, hue)
+    return create('TextLabel', {Text=text, BackgroundTransparency=1,
+        Position=UDim2.fromOffset(x,y), Size=UDim2.fromOffset(w,h),
+        TextColor3=hue, TextSize=size, Font=Enum.Font.Gotham,
+        TextXAlignment=Enum.TextXAlignment.Left}, parent)
 end
 
-local function Border(obj, color)
-    New("UIStroke", {
-        Color = color,
-        Thickness = 1.5,
-        Transparency = 0.3
-    }, obj)
-end
-
-local function Label(parent, text, x, y, w, h, size, color)
-    return New("TextLabel", {
-        BackgroundTransparency = 1,
-        Position = UDim2.fromOffset(x, y),
-        Size = UDim2.fromOffset(w, h),
-        Text = text,
-        TextSize = size,
-        TextColor3 = color,
-        Font = Enum.Font.Gotham,
-        TextXAlignment = Enum.TextXAlignment.Left
-    }, parent)
-end
-
--- =========================================
--- FILTRO DE AMIGOS E INIMIGOS
--- =========================================
-
-local function RegisterPlayer(player)
+local function registerFriend(player)
     if player == LP then return end
-
     local id = player.UserId
-
-    if not SETTINGS.IgnoreFriends then
-        Hub.Friends[id] = "other"
-        return
-    end
-
-    if Hub.Friends[id] ~= nil then
-        return
-    end
-
-    -- Enquanto verifica, não mostra o jogador
-    Hub.Friends[id] = "pending"
-
+    if hub.Friends[id] ~= nil then return end
+    if not settings.IgnoreFriends then hub.Friends[id]='other'; return end
+    hub.Friends[id]='pending'
     task.spawn(function()
-        local ok, isFriend = pcall(function()
+        local ok, value = pcall(function()
             return LP:IsFriendsWithAsync(id)
         end)
-
-        if not Hub.Running then return end
-
-        if ok then
-            Hub.Friends[id] =
-                isFriend and "friend" or "other"
-        else
-            -- Falha: não exibir por precaução
-            Hub.Friends[id] = "unknown"
+        if hub.Running and player.Parent==Players then
+            hub.Friends[id] = ok and (value and 'friend' or 'other') or 'unknown'
         end
     end)
 end
-
-local function IsEnemy(player)
-    if player == LP then
+local function enemy(player)
+    if player == LP or player.Parent ~= Players then return false end
+    if settings.IgnoreFriends and hub.Friends[player.UserId] ~= 'other' then
         return false
     end
-
-    if player.Parent ~= Players then
+    if settings.IgnoreTeam and not LP.Neutral and not player.Neutral
+        and LP.Team ~= nil and LP.Team == player.Team then
         return false
     end
-
-    if SETTINGS.IgnoreFriends then
-        if Hub.Friends[player.UserId] ~= "other" then
-            return false
-        end
-    end
-
-    if SETTINGS.IgnoreTeam then
-        if not LP.Neutral and not player.Neutral then
-            if LP.Team and player.Team then
-                if LP.Team == player.Team then
-                    return false
-                end
-            end
-        end
-    end
-
     return true
 end
-
--- =========================================
--- ENEMY ESP
--- =========================================
-
-local function RemoveESP(player)
-    local esp = Hub.Highlights[player]
-
-    if esp then
-        esp:Destroy()
-        Hub.Highlights[player] = nil
-    end
+local function clearHighlight(player)
+    local highlight=hub.Highlights[player]
+    if highlight then highlight:Destroy(); hub.Highlights[player]=nil end
 end
-
-local function UpdateESP(player)
-    if not SETTINGS.ESP or not IsEnemy(player) then
-        RemoveESP(player)
-        return false
+local function updateHighlight(player)
+    if not settings.ESP or not enemy(player) then
+        clearHighlight(player); return false
     end
-
-    local character = player.Character
-    local humanoid = character
-        and character:FindFirstChildOfClass("Humanoid")
-
-    if not character or not humanoid
-        or humanoid.Health <= 0 then
-        RemoveESP(player)
-        return false
+    local char=player.Character
+    local humanoid=char and char:FindFirstChildOfClass('Humanoid')
+    if not char or not humanoid or humanoid.Health <= 0 then
+        clearHighlight(player); return false
     end
-
-    local highlight = Hub.Highlights[player]
-
+    local highlight=hub.Highlights[player]
     if not highlight then
-        highlight = Instance.new("Highlight")
-        highlight.Name = "Zyon_RedEnemy"
-        highlight.FillColor = C.Red
-        highlight.OutlineColor = C.Red
-        highlight.FillTransparency = 0.55
-        highlight.OutlineTransparency = 0
-        highlight.DepthMode =
-            Enum.HighlightDepthMode.AlwaysOnTop
-
-        highlight.Parent = PlayerGui
-        Hub.Highlights[player] = highlight
+        highlight=create('Highlight', {
+            Name='ZyonEnemyRed', FillColor=color.red,
+            OutlineColor=color.red, FillTransparency=0.55,
+            OutlineTransparency=0, DepthMode=Enum.HighlightDepthMode.AlwaysOnTop
+        }, PlayerGui)
+        hub.Highlights[player]=highlight
     end
-
-    highlight.Adornee = character
-    highlight.Enabled = true
-
+    highlight.Adornee=char
+    highlight.Enabled=true
     return true
 end
 
--- =========================================
--- TARGET SELECTOR
--- =========================================
-
-local RayParams = RaycastParams.new()
-RayParams.FilterType = Enum.RaycastFilterType.Exclude
-RayParams.IgnoreWater = true
-
-local function GetAimPart(player)
-    if not IsEnemy(player) then
-        return nil
-    end
-
-    local char = player.Character
-    if not char then return nil end
-
-    local humanoid = char:FindFirstChildOfClass("Humanoid")
-    if not humanoid or humanoid.Health <= 0 then
-        return nil
-    end
-
-    return char:FindFirstChild("Head")
-        or char:FindFirstChild("HumanoidRootPart")
+local rayParams=RaycastParams.new()
+rayParams.FilterType=Enum.RaycastFilterType.Exclude
+rayParams.IgnoreWater=true
+local function visible(camera, part)
+    if not settings.VisibleOnly then return true end
+    rayParams.FilterDescendantsInstances = LP.Character and {LP.Character} or {}
+    local origin=camera.CFrame.Position
+    local result=Workspace:Raycast(origin,part.Position-origin,rayParams)
+    return result == nil or result.Instance:IsDescendantOf(part.Parent)
 end
-
-local function HasLineOfSight(camera, part)
-    if not SETTINGS.VisibleOnly then
-        return true
-    end
-
-    local origin = camera.CFrame.Position
-    local direction = part.Position - origin
-
-    local exclusions = {}
-
-    if LP.Character then
-        table.insert(exclusions, LP.Character)
-    end
-
-    RayParams.FilterDescendantsInstances = exclusions
-
-    local hit = Workspace:Raycast(
-        origin,
-        direction,
-        RayParams
-    )
-
-    return hit == nil
-        or hit.Instance:IsDescendantOf(part.Parent)
+local function aimPart(player)
+    if not enemy(player) then return nil end
+    local char=player.Character
+    local humanoid=char and char:FindFirstChildOfClass('Humanoid')
+    if not humanoid or humanoid.Health <= 0 then return nil end
+    return char:FindFirstChild('Head') or char:FindFirstChild('HumanoidRootPart')
 end
-
-local function FindTarget()
-    local camera = Workspace.CurrentCamera
+local function findTarget()
+    local camera=Workspace.CurrentCamera
     if not camera then return nil end
-
-    local viewport = camera.ViewportSize
-    local center = viewport * 0.5
-
-    local radius = math.min(
-        viewport.X,
-        viewport.Y
-    ) * SETTINGS.FOV
-
-    local bestPart = nil
-    local bestDist = radius * radius
-
-    local cameraPos = camera.CFrame.Position
-
+    local viewport=camera.ViewportSize
+    local mid=viewport*0.5
+    local radius=math.min(viewport.X,viewport.Y)*settings.FOV
+    local best=radius*radius
+    local closest=nil
     for _, player in ipairs(Players:GetPlayers()) do
-        local part = GetAimPart(player)
-
-        if part then
-            local worldDist =
-                (part.Position - cameraPos).Magnitude
-
-            if worldDist <= SETTINGS.MaxDistance then
-                local screenPos, onScreen =
-                    camera:WorldToViewportPoint(part.Position)
-
-                if onScreen and screenPos.Z > 0 then
-                    local dx = screenPos.X - center.X
-                    local dy = screenPos.Y - center.Y
-                    local dist2 = dx * dx + dy * dy
-
-                    if dist2 < bestDist then
-                        if HasLineOfSight(camera, part) then
-                            bestDist = dist2
-                            bestPart = part
-                        end
-                    end
+        local part=aimPart(player)
+        if part and (part.Position-camera.CFrame.Position).Magnitude <= settings.MaxDistance then
+            local screen, onScreen=camera:WorldToViewportPoint(part.Position)
+            if onScreen and screen.Z > 0 then
+                local dx,dy=screen.X-mid.X,screen.Y-mid.Y
+                local distanceSquared=dx*dx+dy*dy
+                if distanceSquared<best and visible(camera,part) then
+                    best=distanceSquared
+                    closest=part
                 end
             end
         end
     end
-
-    return bestPart
+    return closest
 end
 
--- =========================================
--- INTERFACE
--- =========================================
-
-local Screen = New("ScreenGui", {
-    Name = "ZYON_ESP_HUB_V2",
-    ResetOnSpawn = false,
-    IgnoreGuiInset = false,
-    DisplayOrder = 1000,
-    ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-}, PlayerGui)
-
-Hub.Screen = Screen
-
-local WIDTH = 344
-local HEIGHT = 316
-
-local Main = New("Frame", {
-    Name = "MainHub",
-    BackgroundColor3 = C.BG,
-    BorderSizePixel = 0,
-    Size = UDim2.fromOffset(WIDTH, HEIGHT),
-    Position = UDim2.fromOffset(20, 70),
-    Active = true
-}, Screen)
-
-Round(Main, 19)
-Border(Main, C.Purple)
-
-local MainScale = New("UIScale", {
-    Scale = 1
-}, Main)
-
-local Header = New("Frame", {
-    BackgroundTransparency = 1,
-    Size = UDim2.new(1, 0, 0, 54),
-    Active = true
-}, Main)
-
-local Title = Label(
-    Header, "ZYON HUB",
-    17, 9, 185, 34, 21, C.Purple
-)
-Title.Font = Enum.Font.GothamBold
-
-local MinButton = New("TextButton", {
-    Text = "−",
-    TextSize = 24,
-    Font = Enum.Font.GothamBold,
-    TextColor3 = C.White,
-    BackgroundColor3 = C.Panel,
-    Position = UDim2.new(1, -84, 0, 10),
-    Size = UDim2.fromOffset(34, 34)
-}, Header)
-Round(MinButton, 10)
-
-local CloseButton = New("TextButton", {
-    Text = "×",
-    TextSize = 23,
-    Font = Enum.Font.GothamBold,
-    TextColor3 = C.Red,
-    BackgroundColor3 = C.Panel,
-    Position = UDim2.new(1, -44, 0, 10),
-    Size = UDim2.fromOffset(34, 34)
-}, Header)
-Round(CloseButton, 10)
-
-local Line = New("Frame", {
-    BackgroundColor3 = C.Purple,
-    BackgroundTransparency = 0.45,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(15, 55),
-    Size = UDim2.new(1, -30, 0, 1)
-}, Main)
-
-local function CreateSwitch(text, desc, y, default)
-    local panel = New("Frame", {
-        BackgroundColor3 = C.Panel,
-        BorderSizePixel = 0,
-        Position = UDim2.fromOffset(14, y),
-        Size = UDim2.new(1, -28, 0, 66)
-    }, Main)
-
-    Round(panel, 12)
-
-    local heading = Label(
-        panel, text,
-        12, 6, 200, 26, 15, C.White
-    )
-    heading.Font = Enum.Font.GothamBold
-
-    Label(
-        panel, desc,
-        12, 36, 270, 18, 11, C.Muted
-    )
-
-    local btn = New("TextButton", {
-        Text = default and "ON" or "OFF",
-        TextSize = 13,
-        Font = Enum.Font.GothamBold,
-        TextColor3 = C.BG,
-        BackgroundColor3 =
-            default and C.Green or C.Red,
-        Position = UDim2.new(1, -61, 0, 8),
-        Size = UDim2.fromOffset(49, 27)
-    }, panel)
-
-    Round(btn, 12)
+-- Screen and hub panel
+local screen=create('ScreenGui', {Name='ZyonHubV3', ResetOnSpawn=false,
+    IgnoreGuiInset=false, DisplayOrder=1000,
+    ZIndexBehavior=Enum.ZIndexBehavior.Sibling}, PlayerGui)
+hub.Screen=screen
+local W,H=344,315
+local main=create('Frame',{Name='Hub',Active=true,BackgroundColor3=color.bg,
+    BorderSizePixel=0,Size=UDim2.fromOffset(W,H),Position=UDim2.fromOffset(18,65)},screen)
+corner(main,19); outline(main)
+local mainScale=create('UIScale',{Scale=1},main)
+local header=create('Frame',{Active=true,BackgroundTransparency=1,
+    Size=UDim2.new(1,0,0,55)},main)
+local heading=label(header,'ZYON HUB',17,9,188,35,21,color.purple)
+heading.Font=Enum.Font.GothamBold
+local function button(parent,text,x,y,w,h,hue)
+    local btn=create('TextButton',{Text=text,Font=Enum.Font.GothamBold,
+        TextSize=18,TextColor3=color.white,BackgroundColor3=hue,
+        Position=UDim2.fromOffset(x,y),Size=UDim2.fromOffset(w,h),
+        BorderSizePixel=0,Active=true},parent)
+    corner(btn,10)
     return btn
 end
-
-local ESPToggle = CreateSwitch(
-    "ENEMY ESP",
-    "Apenas inimigos em vermelho",
-    67,
-    SETTINGS.ESP
-)
-
-local AimToggle = CreateSwitch(
-    "SMOOTH AIM",
-    "Segure o botão AIM para mirar",
-    142,
-    SETTINGS.Aim
-)
-
-local StatusPanel = New("Frame", {
-    BackgroundColor3 = C.Panel,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(14, 219),
-    Size = UDim2.new(1, -28, 0, 51)
-}, Main)
-Round(StatusPanel, 12)
-
-local Status = Label(
-    StatusPanel,
-    "ESP: ATIVO | AIM: ATIVO",
-    12, 5, 280, 20, 12, C.Green
-)
-
-local Count = Label(
-    StatusPanel,
-    "Adversarios: 0",
-    12, 27, 280, 18, 12, C.White
-)
-
-local Footer = Label(
-    Main,
-    "ZYON  •  MOBILE  •  DRAG TO MOVE",
-    15, 282, 313, 20, 11, C.Purple
-)
-Footer.TextXAlignment = Enum.TextXAlignment.Center
-
--- ÍCONE FLUTUANTE DO HUB
-local Bubble = New("TextButton", {
-    Name = "MiniHub",
-    Text = "◈",
-    TextSize = 31,
-    TextColor3 = C.White,
-    Font = Enum.Font.GothamBold,
-    BackgroundColor3 = C.Panel,
-    BorderSizePixel = 0,
-    Position = UDim2.fromOffset(12, 135),
-    Size = UDim2.fromOffset(58, 58),
-    Visible = false,
-    Active = true
-}, Screen)
-
-Round(Bubble, 21)
-Border(Bubble, C.Purple)
-
-local BubbleScale = New("UIScale", {
-    Scale = 1
-}, Bubble)
-
--- BOTÃO DE MIRA PARA CELULAR
-local AimButton = New("TextButton", {
-    Name = "MobileAim",
-    Text = "AIM",
-    TextSize = 16,
-    Font = Enum.Font.GothamBold,
-    TextColor3 = C.White,
-    BackgroundColor3 = C.Panel,
-    BorderSizePixel = 0,
-    Size = UDim2.fromOffset(68, 68),
-    Position = UDim2.fromOffset(100, 100),
-    Active = true,
-    Visible = SETTINGS.Aim
-}, Screen)
-
-Round(AimButton, 34)
-Border(AimButton, C.Purple)
-
-local AimScale = New("UIScale", {
-    Scale = 1
-}, AimButton)
-
--- =========================================
--- RESPONSIVIDADE
--- =========================================
-
-local Initialized = false
-local CameraConn
-
-local function Viewport()
-    local camera = Workspace.CurrentCamera
-    return camera and camera.ViewportSize
-        or Vector2.new(800, 600)
+local minus=button(header,'−',W-84,10,34,34,color.panel)
+local close=button(header,'×',W-44,10,34,34,color.panel)
+close.TextColor3=color.red
+create('Frame',{BackgroundColor3=color.purple,BackgroundTransparency=0.5,
+    BorderSizePixel=0,Position=UDim2.fromOffset(15,55),
+    Size=UDim2.new(1,-30,0,1)},main)
+local function switch(text,desc,y,active)
+    local card=create('Frame',{BackgroundColor3=color.panel,BorderSizePixel=0,
+        Position=UDim2.fromOffset(14,y),Size=UDim2.new(1,-28,0,67)},main)
+    corner(card,12)
+    local title=label(card,text,12,6,200,25,15,color.white)
+    title.Font=Enum.Font.GothamBold
+    label(card,desc,12,38,280,18,11,color.muted)
+    local toggle=button(card,active and 'ON' or 'OFF',W-89,9,49,28,
+        active and color.green or color.red)
+    toggle.TextSize=13; toggle.TextColor3=color.bg
+    return toggle
 end
+local espSwitch=switch('ENEMY ESP','Inimigos em vermelho; amigos ocultos',67,settings.ESP)
+local aimSwitch=switch('SMOOTH AIM','Segure AIM para acompanhar o alvo',143,settings.Aim)
+local statusPanel=create('Frame',{BackgroundColor3=color.panel,BorderSizePixel=0,
+    Position=UDim2.fromOffset(14,220),Size=UDim2.new(1,-28,0,52)},main)
+corner(statusPanel,12)
+local status=label(statusPanel,'ESP: ON  |  AIM: ON',12,5,280,21,12,color.green)
+local count=label(statusPanel,'Adversarios: 0',12,29,280,18,12,color.white)
+local footer=label(main,'ZYON  •  MOBILE',15,286,314,18,11,color.purple)
+footer.TextXAlignment=Enum.TextXAlignment.Center
 
-local function ClampGUI(gui, w, h)
-    local vp = Viewport()
-
-    local x = math.clamp(
-        gui.Position.X.Offset,
-        0,
-        math.max(0, vp.X - w)
-    )
-
-    local y = math.clamp(
-        gui.Position.Y.Offset,
-        0,
-        math.max(0, vp.Y - h)
-    )
-
-    gui.Position = UDim2.fromOffset(x, y)
+local bubble=button(screen,'◈',12,130,58,58,color.panel)
+bubble.Name='CollapsedHub'; bubble.TextSize=30; bubble.Visible=false
+corner(bubble,21); outline(bubble)
+local bubbleScale=create('UIScale',{Scale=1},bubble)
+local aimButton=button(screen,'AIM',100,160,68,68,color.panel)
+aimButton.Name='MobileAim'; aimButton.TextSize=16; corner(aimButton,34); outline(aimButton)
+local aimScale=create('UIScale',{Scale=1},aimButton)
+local viewportConnection
+local firstLayout=true
+local function viewport()
+    local cam=Workspace.CurrentCamera
+    return cam and cam.ViewportSize or Vector2.new(800,600)
 end
-
-local function ResizeHub()
-    if not Hub.Running then return end
-
-    local vp = Viewport()
-
-    local scale = math.min(
-        1,
-        math.max(0.1, (vp.X - 24) / WIDTH),
-        math.max(0.1, (vp.Y - 24) / HEIGHT)
-    )
-
-    MainScale.Scale = scale
-
-    if not Initialized then
-        Main.Position = UDim2.fromOffset(
-            math.floor((vp.X - WIDTH * scale) / 2),
-            math.floor((vp.Y - HEIGHT * scale) / 2)
-        )
-
-        Initialized = true
+local function clampPosition(gui,ww,hh)
+    local v=viewport()
+    gui.Position=UDim2.fromOffset(
+        math.clamp(gui.Position.X.Offset,0,math.max(0,v.X-ww)),
+        math.clamp(gui.Position.Y.Offset,0,math.max(0,v.Y-hh)))
+end
+local function resize()
+    if not hub.Running then return end
+    local v=viewport()
+    local scale=math.min(1,(v.X-24)/W,(v.Y-24)/H)
+    scale=math.max(0.1,scale)
+    mainScale.Scale=scale
+    if firstLayout then
+        main.Position=UDim2.fromOffset(math.max(0,(v.X-W*scale)*0.5),
+            math.max(0,(v.Y-H*scale)*0.5))
+        firstLayout=false
     end
-
-    ClampGUI(Main, WIDTH * scale, HEIGHT * scale)
-
-    local miniScale = math.min(
-        1,
-        math.max(0.1, math.min(vp.X, vp.Y) / 250)
-    )
-
-    BubbleScale.Scale = miniScale
-    AimScale.Scale = miniScale
-
-    local miniSize = 58 * miniScale
-    local aimSize = 68 * miniScale
-
-    ClampGUI(Bubble, miniSize, miniSize)
-
-    AimButton.Position = UDim2.fromOffset(
-        math.max(0, vp.X - aimSize - 20),
-        math.max(0, vp.Y * 0.55 - aimSize / 2)
-    )
+    clampPosition(main,W*scale,H*scale)
+    local mini=math.min(1,math.max(0.1,math.min(v.X,v.Y)/250))
+    bubbleScale.Scale=mini; aimScale.Scale=mini
+    clampPosition(bubble,58*mini,58*mini)
+    aimButton.Position=UDim2.fromOffset(
+        math.max(0,v.X-68*mini-20),
+        math.max(0,v.Y*0.55-34*mini))
 end
-
-local function WatchCamera()
-    if CameraConn then
-        CameraConn:Disconnect()
-        CameraConn = nil
-    end
-
-    local camera = Workspace.CurrentCamera
-
+local function watchCamera()
+    if viewportConnection then viewportConnection:Disconnect() end
+    local camera=Workspace.CurrentCamera
     if camera then
-        CameraConn = Connect(
-            camera:GetPropertyChangedSignal("ViewportSize"),
-            ResizeHub
-        )
+        viewportConnection=bind(camera:GetPropertyChangedSignal('ViewportSize'),resize)
     end
-
-    ResizeHub()
+    resize()
 end
+bind(Workspace:GetPropertyChangedSignal('CurrentCamera'),watchCamera)
+watchCamera()
 
-Connect(
-    Workspace:GetPropertyChangedSignal("CurrentCamera"),
-    WatchCamera
-)
-
-WatchCamera()
-
--- =========================================
--- ARRASTAR COM TOQUE OU MOUSE
--- =========================================
-
-local function Draggable(handle, gui, afterDrag)
-    local dragging = false
-    local inputStart
-    local positionStart
-    local activeInput
-    local moved = false
-
-    Connect(handle.InputBegan, function(input)
-        local kind = input.UserInputType
-
-        if kind ~= Enum.UserInputType.Touch
-            and kind ~= Enum.UserInputType.MouseButton1 then
-            return
-        end
-
-        dragging = true
-        activeInput = input
-        inputStart = input.Position
-        positionStart = gui.Position
-        moved = false
+local function draggable(handle, gui, afterMove)
+    local inputStart, positionStart, activeInput
+    local dragging,moved=false,false
+    bind(handle.InputBegan,function(input)
+        if input.UserInputType~=Enum.UserInputType.Touch and
+            input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
+        activeInput=input; inputStart=input.Position
+        positionStart=gui.Position; dragging=true; moved=false
     end)
-
-    Connect(UIS.InputChanged, function(input)
-        if not dragging or not activeInput then
+    bind(UIS.InputChanged,function(input)
+        if not dragging or not activeInput then return end
+        if activeInput.UserInputType==Enum.UserInputType.Touch then
+            if input~=activeInput then return end
+        elseif input.UserInputType~=Enum.UserInputType.MouseMovement then
             return
         end
-
-        if activeInput.UserInputType ==
-            Enum.UserInputType.Touch then
-            if input ~= activeInput then return end
-        elseif input.UserInputType ~=
-            Enum.UserInputType.MouseMovement then
-            return
-        end
-
-        local delta = input.Position - inputStart
-
-        if delta.Magnitude > 7 then
-            moved = true
-        end
-
+        local delta=input.Position-inputStart
+        if delta.Magnitude>7 then moved=true end
         if not moved then return end
-
-        local vp = Viewport()
-        local size = gui.AbsoluteSize
-
-        local x = math.clamp(
-            positionStart.X.Offset + delta.X,
-            0,
-            math.max(0, vp.X - size.X)
-        )
-
-        local y = math.clamp(
-            positionStart.Y.Offset + delta.Y,
-            0,
-            math.max(0, vp.Y - size.Y)
-        )
-
-        gui.Position = UDim2.fromOffset(x, y)
+        gui.Position=UDim2.fromOffset(
+            positionStart.X.Offset+delta.X,positionStart.Y.Offset+delta.Y)
+        clampPosition(gui,gui.AbsoluteSize.X,gui.AbsoluteSize.Y)
     end)
-
-    Connect(UIS.InputEnded, function(input)
-        if not dragging then return end
-
-        local match = input == activeInput
-
-        if activeInput and
-            activeInput.UserInputType ==
-            Enum.UserInputType.MouseButton1 then
-            match = input.UserInputType ==
-                Enum.UserInputType.MouseButton1
+    bind(UIS.InputEnded,function(input)
+        if not dragging or not activeInput then return end
+        local match=input==activeInput
+        if activeInput.UserInputType==Enum.UserInputType.MouseButton1 then
+            match=input.UserInputType==Enum.UserInputType.MouseButton1
         end
-
         if match then
-            dragging = false
-            activeInput = nil
-
-            if moved and afterDrag then
-                afterDrag()
-            end
+            dragging=false; activeInput=nil
+            if moved and afterMove then afterMove() end
         end
     end)
 end
-
-Draggable(Header, Main)
-
-local LastBubbleDrag = -math.huge
-
-Draggable(Bubble, Bubble, function()
-    LastBubbleDrag = os.clock()
-end)
-
--- =========================================
--- MINIMIZAR
--- =========================================
-
-local function SetMinimized(value)
-    Hub.Minimized = value
-
+draggable(header,main)
+local lastDrag=-math.huge
+draggable(bubble,bubble,function() lastDrag=os.clock() end)
+local function minimized(value)
+    hub.Minimized=value
     if value then
-        Bubble.Position = Main.Position
-        Main.Visible = false
-        Bubble.Visible = true
+        bubble.Position=main.Position; main.Visible=false; bubble.Visible=true
     else
-        Main.Position = Bubble.Position
-        Main.Visible = true
-        Bubble.Visible = false
+        main.Position=bubble.Position; main.Visible=true; bubble.Visible=false
     end
-
-    ResizeHub()
+    resize()
 end
-
-Connect(MinButton.Activated, function()
-    SetMinimized(true)
+bind(minus.Activated,function() minimized(true) end)
+bind(bubble.Activated,function()
+    if os.clock()-lastDrag>=0.25 then minimized(false) end
 end)
 
-Connect(Bubble.Activated, function()
-    if os.clock() - LastBubbleDrag < 0.25 then
-        return
-    end
-
-    SetMinimized(false)
-end)
-
--- =========================================
--- BOTÕES
--- =========================================
-
-local function RefreshStatus()
-    ESPToggle.Text = SETTINGS.ESP and "ON" or "OFF"
-    ESPToggle.BackgroundColor3 =
-        SETTINGS.ESP and C.Green or C.Red
-
-    AimToggle.Text = SETTINGS.Aim and "ON" or "OFF"
-    AimToggle.BackgroundColor3 =
-        SETTINGS.Aim and C.Green or C.Red
-
-    AimButton.Visible = SETTINGS.Aim
-
-    Status.Text =
-        "ESP: " .. (SETTINGS.ESP and "ON" or "OFF")
-        .. "  |  AIM: "
-        .. (SETTINGS.Aim and "ON" or "OFF")
-
-    Status.TextColor3 =
-        (SETTINGS.ESP or SETTINGS.Aim)
-        and C.Green or C.Muted
+local function refresh()
+    espSwitch.Text=settings.ESP and 'ON' or 'OFF'
+    espSwitch.BackgroundColor3=settings.ESP and color.green or color.red
+    aimSwitch.Text=settings.Aim and 'ON' or 'OFF'
+    aimSwitch.BackgroundColor3=settings.Aim and color.green or color.red
+    aimButton.Visible=settings.Aim
+    status.Text='ESP: '..(settings.ESP and 'ON' or 'OFF')..
+        '  |  AIM: '..(settings.Aim and 'ON' or 'OFF')
+    status.TextColor3=(settings.ESP or settings.Aim) and color.green or color.muted
 end
-
-Connect(ESPToggle.Activated, function()
-    SETTINGS.ESP = not SETTINGS.ESP
-
-    if not SETTINGS.ESP then
-        for player in pairs(Hub.Highlights) do
-            RemoveESP(player)
-        end
+bind(espSwitch.Activated,function()
+    settings.ESP=not settings.ESP
+    if not settings.ESP then
+        for player in pairs(hub.Highlights) do clearHighlight(player) end
     end
-
-    RefreshStatus()
+    refresh()
 end)
-
-Connect(AimToggle.Activated, function()
-    SETTINGS.Aim = not SETTINGS.Aim
-
-    if not SETTINGS.Aim then
-        Hub.HoldingAim = false
-        Hub.Target = nil
-    end
-
-    RefreshStatus()
+bind(aimSwitch.Activated,function()
+    settings.Aim=not settings.Aim
+    if not settings.Aim then hub.HoldingAim=false; hub.Target=nil end
+    refresh()
 end)
-
--- =========================================
--- CONTROLE DE AIM POR TOQUE
--- =========================================
-
-local AimInput
-
-Connect(AimButton.InputBegan, function(input)
-    local kind = input.UserInputType
-
-    if kind ~= Enum.UserInputType.Touch
-        and kind ~= Enum.UserInputType.MouseButton1 then
-        return
-    end
-
-    if not SETTINGS.Aim then return end
-
-    AimInput = input
-    Hub.HoldingAim = true
-    Hub.Target = nil
-
-    AimButton.BackgroundColor3 = C.Purple
-    AimButton.Text = "LOCK"
+local aimTouch
+bind(aimButton.InputBegan,function(input)
+    if not settings.Aim then return end
+    if input.UserInputType~=Enum.UserInputType.Touch and
+        input.UserInputType~=Enum.UserInputType.MouseButton1 then return end
+    aimTouch=input; hub.HoldingAim=true; hub.Target=nil
+    aimButton.Text='LOCK'; aimButton.BackgroundColor3=color.purple
 end)
-
-Connect(UIS.InputEnded, function(input)
-    if not AimInput then return end
-
-    local released = input == AimInput
-
-    if AimInput.UserInputType ==
-        Enum.UserInputType.MouseButton1 then
-        released = input.UserInputType ==
-            Enum.UserInputType.MouseButton1
+bind(UIS.InputEnded,function(input)
+    if not aimTouch then return end
+    local released=input==aimTouch
+    if aimTouch.UserInputType==Enum.UserInputType.MouseButton1 then
+        released=input.UserInputType==Enum.UserInputType.MouseButton1
     end
-
     if released then
-        AimInput = nil
-        Hub.HoldingAim = false
-        Hub.Target = nil
-
-        AimButton.BackgroundColor3 = C.Panel
-        AimButton.Text = "AIM"
+        aimTouch=nil; hub.HoldingAim=false; hub.Target=nil
+        aimButton.Text='AIM'; aimButton.BackgroundColor3=color.panel
     end
 end)
 
--- =========================================
--- AIMBOT SUAVE
--- =========================================
+local renderKey='ZYON_SMOOTH_AIM_V3'
+local elapsed=settings.TargetInterval
+RunService:BindToRenderStep(renderKey,Enum.RenderPriority.Camera.Value+1,function(dt)
+    if not hub.Running or not settings.Aim or not hub.HoldingAim then return end
+    local camera=Workspace.CurrentCamera
+    if not camera then return end
+    elapsed=elapsed+dt
+    if elapsed>=settings.TargetInterval then
+        elapsed=0
+        hub.Target=findTarget()
+    end
+    local part=hub.Target
+    if not part or not part.Parent then return end
+    local char=part.Parent
+    local humanoid=char:FindFirstChildOfClass('Humanoid')
+    local player=Players:GetPlayerFromCharacter(char)
+    if not humanoid or humanoid.Health<=0 or not player or not enemy(player) then
+        hub.Target=nil; return
+    end
+    local origin=camera.CFrame.Position
+    if (part.Position-origin).Magnitude<0.01 then return end
+    local alpha=1-math.exp(-settings.Smoothness*math.min(dt,0.1))
+    camera.CFrame=camera.CFrame:Lerp(CFrame.lookAt(origin,part.Position),alpha)
+end)
 
-local RENDER_NAME = "ZYON_SMOOTH_AIM_V2"
-local scanElapsed = SETTINGS.TargetInterval
+bind(Players.PlayerAdded,registerFriend)
+bind(Players.PlayerRemoving,function(player)
+    clearHighlight(player)
+    hub.Friends[player.UserId]=nil
+    if hub.Target and player.Character and
+        hub.Target:IsDescendantOf(player.Character) then
+        hub.Target=nil
+    end
+end)
+for _,player in ipairs(Players:GetPlayers()) do registerFriend(player) end
 
-RunService:BindToRenderStep(
-    RENDER_NAME,
-    Enum.RenderPriority.Camera.Value + 1,
-    function(dt)
-        if not Hub.Running then return end
-        if not SETTINGS.Aim then return end
-        if not Hub.HoldingAim then return end
-
-        local camera = Workspace.CurrentCamera
-        if not camera then return end
-
-        scanElapsed += dt
-
-        if scanElapsed >= SETTINGS.TargetInterval then
-            scanElapsed = 0
-            Hub.Target = FindTarget()
+task.spawn(function()
+    while hub.Running do
+        local n=0
+        for _,player in ipairs(Players:GetPlayers()) do
+            if not hub.Running then break end
+            if updateHighlight(player) then n=n+1 end
         end
+        if hub.Running then count.Text='Adversarios: '..n end
+        task.wait(settings.ESPInterval)
+    end
+end)
 
-        local target = Hub.Target
-        if not target or not target.Parent then
-            return
-        end
-
-        local char = target.Parent
-        local hum = char:FindFirstChildOfClass("Humanoid")
-
-        if not hum or hum.Health <= 0 then
-            Hub.Target = nil
-            return
-        end
-
-        local targetPlayer =
-            Player
+function hub.Stop()
+    if not hub.Running then return end
+    hub.Running=false; hub.HoldingAim=false; hub.Target=nil
+    RunService:UnbindFromRenderStep(renderKey)
+    for _,connection in ipairs(hub.Connections) do
+        connection:Disconnect()
+    end
+    for player in pairs(hub.Highlights) do clearHighlight(player) end
+    screen:Destroy()
+    if env.ZyonHub==hub then env.ZyonHub=nil end
+end
+bind(close.Activated,hub.Stop)
+refresh()
+print('[ZYON] Hub v3 carregado')
