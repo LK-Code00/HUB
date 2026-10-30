@@ -553,7 +553,7 @@ local function rebuildRoster()
         local relationButton=button(row,relationText,W-125,5,94,31,relationColor)
         relationButton.TextSize=12
         relationButton.ZIndex=18
-        bind(relationButton.Activated,function()
+        relationButton.Activated:Connect(function()
             if not hub.Running or player.Parent~=Players then return end
             local old=hub.Relations[player.UserId]
             hub.Relations[player.UserId] =
@@ -751,8 +751,13 @@ end)
 for _,player in ipairs(Players:GetPlayers()) do registerFriend(player) end
 
 task.spawn(function()
+    local lastTeamRefresh=-math.huge
     while hub.Running do
-        refreshTeamCache()
+        -- ESP updates more often than custom-team discovery.
+        if os.clock()-lastTeamRefresh>=0.9 then
+            refreshTeamCache()
+            lastTeamRefresh=os.clock()
+        end
         local n=0
         for _,player in ipairs(Players:GetPlayers()) do
             if not hub.Running then break end
