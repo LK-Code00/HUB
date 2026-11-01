@@ -1,4 +1,4 @@
--- ZYON HUB v9 | Roblox Luau | Desktop + Mobile
+-- ZYON HUB | Roblox Luau | Desktop + Mobile
 -- Persistent preferences, live target validation, and manual camera priority.
 
 local Players = game:GetService('Players')
@@ -19,6 +19,7 @@ local settingValues = {
     ShowFOV = true, HubTransparency = 0.06, FillTransparency = 0.55,
     FOVX = 0.5, FOVY = 0.5, FOVLocked = true,
     MaxDistance = 350, ESPInterval = 0.3, TargetInterval = 0.12,
+    LowGraphics = false, ReduceParticles = false, ShaderPreset = 0, ShaderStrength = 0.5,
     ForceFFA = false, RespectManualInput = true, ManualPause = 0.45,
     Accent = 1, ActiveTab = 'aim', Minimized = false,
     WindowX = 0.5, WindowY = 0.5, BubbleX = 0, BubbleY = 0.2, BubbleMoved = false,
@@ -49,7 +50,7 @@ do
     env.ZyonHubProfiles = profiles
     local relationsByGame = {}
     local limits = {
-        Smoothness={1,20}, FOV={0.05,0.5}, HubTransparency={0,0.85}, FillTransparency={0,0.95},
+        ShaderPreset={0,3}, ShaderStrength={0,1}, Smoothness={1,20}, FOV={0.05,0.5}, HubTransparency={0,0.85}, FillTransparency={0,0.95},
         FOVX={0,1}, FOVY={0,1}, MaxDistance={1,10000}, ESPInterval={0.05,5}, TargetInterval={0.03,2},
         Accent={1,4}, WindowX={0,1}, WindowY={0,1}, BubbleX={0,1}, BubbleY={0,1}, ManualPause={0.1,2},
     }
@@ -91,9 +92,9 @@ do
                 and value>-math.huge and value<math.huge and limits[key] then
                 local range=limits[key]
                 value=math.clamp(value,range[1],range[2])
-                if key=='Accent' or key=='Smoothness' then value=math.floor(value+0.5) end
+                if key=='Accent' or key=='Smoothness' or key=='ShaderPreset' then value=math.floor(value+0.5) end
                 settingValues[key]=value
-            elseif key=='ActiveTab' and table.find({'aim','fov','players','appearance'},value) then
+            elseif key=='ActiveTab' and table.find({'aim','fov','players','appearance','graphics'},value) then
                 settingValues[key]=value
             end
         end
@@ -322,9 +323,9 @@ local function refreshTeamCache()
             local relation = hub.Relations[p.UserId]
             local allowed = hub.Friends[p.UserId] == 'other'
                 or not settings.IgnoreFriends
-            if allowed and relation == 'ally' then
+            if relation == 'ally' then
                 allowed = false
-            elseif allowed and relation == 'enemy' then
+            elseif relation == 'enemy' then
                 -- Manually selected player: explicit classification wins.
                 allowed = true
                 resolved = 'manual'
@@ -553,6 +554,84 @@ local function manualCameraActive()
     return false
 end
 
+-- Reversible, client-side graphics. No per-frame workspace scans.
+local applyGraphics
+do
+    local Lighting=game:GetService('Lighting')
+    local originals=setmetatable({}, {__mode='k'})
+    local owned={}
+    local function override(object,property,value)
+        local entry=originals[object]
+        if not entry then entry={}; originals[object]=entry end
+        if not entry[property] then entry[property]={before=object[property]} end
+        entry[property].last=value
+        object[property]=value
+    end
+    local function restore(object)
+        local entry=originals[object]
+        if not entry then return end
+        for property,values in pairs(entry) do
+            pcall(function()
+                -- Do not replace a newer value set by the game itself.
+                if object[property]==values.last then object[property]=values.before end
+            end)
+        end
+        originals[object]=nil
+    end
+    local function particle(object)
+        return object:IsA('ParticleEmitter') or object:IsA('Trail') or object:IsA('Beam')
+            or object:IsA('Smoke') or object:IsA('Fire') or object:IsA('Sparkles')
+    end
+    local function adjust(object)
+        if owned[object] then return end
+        if (settings.ReduceParticles and particle(object))
+            or (settings.LowGraphics and object:IsA('PostEffect')) then
+            override(object,'Enabled',false)
+        else restore(object) end
+    end
+    local function clearShaders()
+        for object in pairs(owned) do object:Destroy() end
+        table.clear(owned)
+    end
+    local function effect(class,props)
+        local object=create(class,props,Lighting)
+        owned[object]=true
+        return object
+    end
+    local function shaders()
+        clearShaders()
+        if settings.ShaderPreset==0 or settings.LowGraphics then return end
+        local amount=settings.ShaderStrength
+        local r,g,b=255,255,255
+        if settings.ShaderPreset==2 then g,b=244,225
+        elseif settings.ShaderPreset==3 then r,g=225,241 end
+        effect('ColorCorrectionEffect',{Name='ZyonColor',Enabled=true,
+            Brightness=0.015*amount,Contrast=0.12*amount,Saturation=0.16*amount,
+            TintColor=Color3.fromRGB(255+(r-255)*amount,255+(g-255)*amount,255+(b-255)*amount)})
+        effect('BloomEffect',{Name='ZyonBloom',Enabled=true,Intensity=0.18*amount,Size=18,Threshold=1.4})
+    end
+    applyGraphics=function()
+        if settings.LowGraphics then override(Lighting,'GlobalShadows',false)
+        else restore(Lighting) end
+        for _,root in ipairs({Workspace,Lighting}) do
+            for _,object in ipairs(root:GetDescendants()) do adjust(object) end
+        end
+        shaders()
+    end
+    for _,root in ipairs({Workspace,Lighting}) do
+        bind(root.DescendantAdded,function(object)
+            if hub.Running then adjust(object) end
+        end)
+    end
+    hub.RestoreGraphics=function()
+        clearShaders()
+        for object in pairs(originals) do restore(object) end
+    end
+    -- Slider updates only change our effects, without rescanning the map.
+    hub.RefreshShaders=shaders
+    applyGraphics()
+end
+
 -- UI stays scoped so the standalone script remains below Luau's local limit.
 do
     local W, H = 368, 540
@@ -560,7 +639,7 @@ do
     local activeTab = settings.ActiveTab
     local rebuildRoster, refresh, setLocked, refreshFov, resize
     local screen = create('ScreenGui', {
-        Name='ZyonHubV9', ResetOnSpawn=false, IgnoreGuiInset=true,
+        Name='ZyonHub', ResetOnSpawn=false, IgnoreGuiInset=true,
         ScreenInsets=Enum.ScreenInsets.None, DisplayOrder=1000,
         ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
     }, PlayerGui)
@@ -651,11 +730,6 @@ do
     local header = create('Frame', {BackgroundTransparency=1, Size=UDim2.new(1,0,0,72)}, main)
     accentLabel(header, 'ZYON', 18,10,145,28,23,color.purple,true)
     text(header, 'HUB  /  CONTROLE EM TEMPO REAL', 19,40,245,18,9,color.muted)
-    local version = text(header, 'V9', 169,15,36,21,10,color.muted,true)
-    version.TextXAlignment = Enum.TextXAlignment.Center
-    version.BackgroundColor3 = color.panel
-    version.BackgroundTransparency = 0
-    corner(version, 6)
     local minimize = button(header, '−', W-96,16,36,36)
     local close = button(header, '×', W-54,16,36,36)
     minimize.TextSize, close.TextSize = 23, 23
@@ -668,10 +742,10 @@ do
     local tabs = surface(create('Frame', {Name='Tabs', BackgroundColor3=color.bg,
         BorderSizePixel=0, Position=UDim2.fromOffset(14,80), Size=UDim2.new(1,-28,0,44)}, main), 12)
     local pages, tabButtons = {}, {}
-    local definitions = {{'aim','GERAL'}, {'fov','FOV'}, {'players','JOGADORES'}, {'appearance','VISUAL'}}
+    local definitions = {{'aim','GERAL'}, {'fov','FOV'}, {'players','JOGADORES'}, {'appearance','VISUAL'}, {'graphics','GRAFICOS'}}
     for index, definition in ipairs(definitions) do
-        local tab = button(tabs, definition[2], 4+(index-1)*83,4,83,36)
-        tab.TextSize = 10
+        local tab = button(tabs, definition[2], 4+(index-1)*66.4,4,66.4,36)
+        tab.TextSize = 9
         tabButtons[definition[1]] = tab
     end
     local footer = text(main, 'ESP ON  ·  AIM ON', 18,H-25,W-36,17,10,color.muted)
@@ -906,6 +980,58 @@ do
             if hub.Running and activeTab=='players' then rebuildRoster() end
         end)
     end)
+
+    local graphicsPage=page('graphics')
+    intro(graphicsPage,'Graficos e efeitos','Ajustes locais de desempenho e iluminacao.')
+    local graphicsToggle,particleToggle
+    local presetButtons={}
+    local presetNames={'DESLIGADO','SUAVE','QUENTE','FRIO'}
+    local function refreshGraphicsControls()
+        graphicsToggle.set(settings.LowGraphics)
+        particleToggle.set(settings.ReduceParticles)
+        for index,control in ipairs(presetButtons) do
+            control.Text=(settings.ShaderPreset==index-1 and '• ' or '')..presetNames[index]
+            control.TextColor3=settings.ShaderPreset==index-1 and color.green or color.muted
+        end
+    end
+    graphicsToggle=toggle(graphicsPage,'Modo leve','Desliga sombras e pos-efeitos; desativa shaders.',settings.LowGraphics,function(value)
+        settings.LowGraphics=value
+        if value then settings.ShaderPreset=0 end
+        applyGraphics()
+        refreshGraphicsControls()
+    end)
+    particleToggle=toggle(graphicsPage,'Reduzir particulas','Oculta emissores, rastros, feixes e fumaca.',settings.ReduceParticles,function(value)
+        settings.ReduceParticles=value
+        applyGraphics()
+        refreshGraphicsControls()
+    end)
+    local shaderCard=card(graphicsPage,145)
+    text(shaderCard,'SHADERS / EFEITOS',14,9,260,23,12,color.white,true)
+    text(shaderCard,'Cor e brilho com efeitos nativos do Roblox.',14,35,310,18,10,color.muted)
+    for index,name in ipairs(presetNames) do
+        local control=button(shaderCard,name,14+((index-1)%2)*160,59+math.floor((index-1)/2)*40,152,34)
+        presetButtons[index]=control
+        bind(control.Activated,function()
+            settings.ShaderPreset=index-1
+            if settings.ShaderPreset~=0 then settings.LowGraphics=false end
+            applyGraphics()
+            refreshGraphicsControls()
+        end)
+    end
+    slider(graphicsPage,'INTENSIDADE DOS EFEITOS',0,100,settings.ShaderStrength*100,percent,function(value)
+        settings.ShaderStrength=value/100
+        hub.RefreshShaders()
+    end)
+    local restoreCard=card(graphicsPage,92)
+    local restoreButton=button(restoreCard,'RESTAURAR GRAFICOS DO JOGO',14,10,W-56,38)
+    local restoreHint=text(restoreCard,'Desligar os ajustes ou fechar o Hub restaura\nas propriedades modificadas por ele.',14,53,W-56,32,10,color.muted)
+    restoreHint.TextWrapped=true
+    bind(restoreButton.Activated,function()
+        settings.LowGraphics=false; settings.ReduceParticles=false; settings.ShaderPreset=0
+        applyGraphics()
+        refreshGraphicsControls()
+    end)
+    refreshGraphicsControls()
 
     local appearancePage=page('appearance')
     intro(appearancePage,'Do seu jeito','Cores e transparencias em um so lugar.')
@@ -1169,7 +1295,7 @@ do
 end
 
 local elapsed=settings.TargetInterval
-local renderKey='ZYON_SMOOTH_AIM_V9'
+local renderKey='ZYON_SMOOTH_AIM'
 RunService:BindToRenderStep(renderKey,Enum.RenderPriority.Camera.Value+1,function(dt)
     local camera=Workspace.CurrentCamera
     if not hub.Running or not focused or not settings.Aim or not settings.FOVLocked
@@ -1245,7 +1371,8 @@ function hub.Stop()
         connection:Disconnect()
     end
     for player in pairs(hub.Highlights) do clearHighlight(player) end
+    hub.RestoreGraphics()
     hub.Screen:Destroy()
     if env.ZyonHub==hub then env.ZyonHub=nil end
 end
-print('[ZYON] Hub v9 | ajustes persistentes, alvos revalidados e controle manual prioritario')
+print('[ZYON] Hub | ajustes persistentes, alvos revalidados e controle manual prioritario')

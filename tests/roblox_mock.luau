@@ -86,12 +86,20 @@ end
 local Instance={}
 function Instance.new(class)
     local object=setmetatable({_props={ClassName=class,Name=class},_children={},_signals={}},objectMeta)
-    for _,key in ipairs({'InputBegan','InputChanged','InputEnded','Activated','Died','HealthChanged','StateChanged','CharacterAdded','CharacterRemoving','ChildAdded'}) do object[key]=signal() end
+    for _,key in ipairs({'InputBegan','InputChanged','InputEnded','Activated','Died','HealthChanged','StateChanged','CharacterAdded','CharacterRemoving','ChildAdded','DescendantAdded'}) do object[key]=signal() end
     object.Visible=true
     object.Size=UDim2.fromOffset(0,0)
     object.Position=UDim2.fromOffset(0,0)
     table.insert(objects,object)
     return object
+end
+function methods:GetDescendants()
+    local result={}
+    for _,child in ipairs(self:GetChildren()) do
+        table.insert(result,child)
+        for _,nested in ipairs(child:GetDescendants()) do table.insert(result,nested) end
+    end
+    return result
 end
 function methods:GetChildren() return table.clone(self._children) end
 function methods:FindFirstChild(name)
@@ -102,7 +110,7 @@ function methods:FindFirstChildOfClass(class)
     for _,child in ipairs(self._children) do if child.ClassName==class then return child end end
 end
 function methods:IsA(class)
-    return self.ClassName==class or (class=='BasePart' and self.ClassName=='Part') or (class=='GuiObject' and
+    return self.ClassName==class or (class=='PostEffect' and table.find({'BloomEffect','ColorCorrectionEffect','SunRaysEffect','BlurEffect','DepthOfFieldEffect'},self.ClassName)~=nil) or (class=='BasePart' and self.ClassName=='Part') or (class=='GuiObject' and
         table.find({'Frame','TextButton','TextLabel','ScrollingFrame'},self.ClassName)~=nil)
 end
 function methods:GetPropertyChangedSignal(key)
@@ -202,9 +210,10 @@ local function frame(position)
     end}
 end
 function CFrame.lookAt(origin,goal) return {Position=origin,Goal=goal} end
+local lighting=Instance.new('Lighting'); lighting.GlobalShadows=true
 local game={GameId=42,PlaceId=420}
 function game:GetService(name)
-    return ({Players=players,RunService=runService,UserInputService=input,Workspace=workspace,HttpService=http})[name]
+    return ({Players=players,RunService=runService,UserInputService=input,Workspace=workspace,HttpService=http,Lighting=lighting})[name]
 end
 local function find(parent,key,value)
     for _,child in ipairs(parent:GetChildren()) do

@@ -1,6 +1,6 @@
-# ZYON HUB v9
+# ZYON HUB
 
-Hub em Luau para o cliente Roblox, em um unico arquivo (`HUB.lua`), com suporte a mouse e toque. A versao v9 salva as preferencias, revalida os alvos durante o acompanhamento e prioriza o controle manual da camera.
+Hub em Luau para o cliente Roblox, em um unico arquivo (`HUB.lua`), com suporte a mouse e toque. O Hub salva as preferencias, revalida os alvos durante o acompanhamento e prioriza o controle manual da camera.
 
 ## Interface
 
@@ -8,6 +8,7 @@ Hub em Luau para o cliente Roblox, em um unico arquivo (`HUB.lua`), com suporte 
 - **FOV:** trava de posicao, visibilidade do circulo, raio, coordenadas X/Y e centralizacao.
 - **Jogadores:** modo FFA e classificacao manual Auto → Inimigo → Aliado.
 - **Visual:** quatro cores de destaque, transparencias, estado do salvamento e botao **Salvar agora**.
+- **Graficos:** modo leve, reducao de particulas, presets de efeitos e intensidade.
 
 A janela usa cartoes e espacamentos consistentes, abas com estado selecionado e paginas rolaveis. Em telas baixas, a janela fica mais curta antes de reduzir a escala. Os sliders possuem uma area de toque maior que a linha visivel.
 
@@ -29,9 +30,23 @@ Enquanto a posicao estiver travada, arraste, sliders X/Y e centralizacao ficam d
 - Ocultar o circulo ou perder o foco da janela encerra o modo de edicao e trava a posicao atual.
 - O FOV e sua trava sao restaurados junto das demais configuracoes. Se voce salvar com a posicao destravada, a proxima execucao tambem abre em modo de edicao, com a mira pausada.
 
+## Amigos e classificacao manual
+
+Na aba **Jogadores**, a classificacao explicita tem prioridade: **Inimigo** permite selecionar inclusive amigos, mesmo se a consulta de amizade estiver pendente; **Aliado** exclui o jogador. Em **Auto**, os filtros de amizade, equipe e partida voltam a ser aplicados. A escolha afeta a selecao da mira e o ESP, e continua sendo salva por jogo.
+
+## Graficos e shaders
+
+- **Modo leve:** desliga sombras globais e pos-efeitos existentes no Lighting e na camera, sem destruir objetos ou texturas do jogo.
+- **Reduzir particulas:** desativa emissores, rastros, feixes, fumaca, fogo e brilhos; tambem acompanha novos efeitos carregados na cena.
+- **Shaders / efeitos:** Desligado, Suave, Quente e Frio, com intensidade de 0 a 100%. Usam ColorCorrection e Bloom nativos do Roblox; nao instalam shaders externos.
+- Ativar o modo leve desliga os shaders do Hub. Selecionar um preset liga os efeitos e desativa o modo leve. A reducao de particulas e independente.
+- **Restaurar graficos do jogo** desliga os ajustes e restaura as propriedades modificadas. Fechar ou reexecutar o Hub tambem limpa seus efeitos e restaura os valores anteriores, antes de reaplicar as preferencias salvas.
+
+Os ajustes sao locais, persistem no mesmo perfil e nao mudam a geometria ou a logica do jogo. O ganho de desempenho e a aparencia dependem do dispositivo, da qualidade grafica do Roblox e da cena. Reduzir particulas tambem pode ocultar efeitos visuais de habilidades; a opcao e independente para permitir desliga-la.
+
 ## Salvamento automatico
 
-O Hub restaura os ajustes antes de construir a interface: ESP/Aim, filtros, sensibilidade, distancia e intervalos, tamanho/visibilidade/posicao/trava do FOV, prioridade manual, modo FFA, tema, transparencias, aba ativa, estado minimizado e posicoes da janela e da bolha. As classificacoes manuais dos jogadores tambem sao salvas e permanecem quando eles saem da partida.
+O Hub restaura os ajustes antes de construir a interface: ESP/Aim, filtros, sensibilidade, distancia e intervalos, tamanho/visibilidade/posicao/trava do FOV, prioridade manual, modo FFA, tema, transparencias, opcoes graficas, preset/intensidade de efeitos, aba ativa, estado minimizado e posicoes da janela e da bolha. As classificacoes manuais dos jogadores tambem sao salvas e permanecem quando eles saem da partida.
 
 - Com `readfile` e `writefile` disponiveis, o perfil e gravado em **`ZyonHub_<UserId>.json`**, na pasta de arquivos disponibilizada pelo ambiente. Ele e carregado nas proximas execucoes nesse mesmo dispositivo/ambiente.
 - Cada conta tem seu perfil. Classificacoes de jogadores ficam separadas por `GameId` (ou `PlaceId` quando nao houver `GameId`).
@@ -75,7 +90,7 @@ luau-compile HUB.lua > /tmp/hub-bytecode.txt
 python3 tests/run.py /caminho/para/luau
 ```
 
-Os 34 testes comportamentais cobrem os controles da v8 e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas.
+Os 40 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
 
 O teste usa uma simulacao pequena das APIs do Roblox. Ele verifica a logica e a ligacao dos eventos, mas nao substitui renderizacao, encaminhamento real de toque, fontes ou comportamento de camera dentro do Roblox.
 
@@ -90,3 +105,6 @@ O teste usa uma simulacao pequena das APIs do Roblox. Ele verifica a logica e a 
 - Alterar ajustes, conferir **Visual → Configuracoes**, fechar o cliente e reabrir no mesmo ambiente com suporte a arquivos.
 - Confirmar que a mira solta um alvo morto ou que entrou atras de uma parede.
 - Mover a camera com um jogador dentro do FOV e confirmar prioridade manual no dispositivo usado.
+
+- Testar a classificacao manual de um amigo como Inimigo, depois voltar para Auto.
+- Alternar modo leve, particulas e presets; fechar o Hub e conferir a restauracao da cena.

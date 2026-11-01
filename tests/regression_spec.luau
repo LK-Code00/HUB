@@ -136,7 +136,7 @@ end)
 local targetPlayer=players.list[2]
 local otherPlayer=players.list[3]
 local targetHead,targetHumanoid,targetCharacter
-local function step(dt) runService.bindings.ZYON_SMOOTH_AIM_V9(dt or 1/60) end
+local function step(dt) runService.bindings.ZYON_SMOOTH_AIM(dt or 1/60) end
 local function prepareAim()
     settings.Aim=true; settings.RespectManualInput=true; settings.FOVLocked=true
     settings.FOVX=0.5; settings.FOVY=0.5; settings.FOV=0.25; settings.MaxDistance=10000
@@ -330,4 +330,4 @@ test('new character can be acquired after death and old listeners are disconnect
     for _,connection in ipairs(dead.Died.connections) do assert(not connection.Connected) end
     hub.Stop()
 end)
-print(string.format('%d behavioral checks passed',passed))
+

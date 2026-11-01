@@ -19,7 +19,7 @@ test('unlock, pause aiming, and reveal editing controls',function()
     assert(named('FovEditBar').Visible)
     -- The camera double has no Lerp method: a mistaken aim pass would error.
     hub.Target={Parent={}}
-    runService.bindings.ZYON_SMOOTH_AIM_V9(1)
+    runService.bindings.ZYON_SMOOTH_AIM(1)
     assert(hub.Target==nil)
     hub.Target=nil
 end)
@@ -164,12 +164,12 @@ test('re-running cleans up the old GUI and input connections',function()
     hub=environment.ZyonHub
     assert(oldHub~=hub and not oldHub.Running and oldHub.Screen.Destroyed)
     for _,connection in ipairs(oldHub.Connections) do assert(not connection.Connected) end
-    assert(runService.bindings.ZYON_SMOOTH_AIM_V9)
+    assert(runService.bindings.ZYON_SMOOTH_AIM)
 end)
 test('close is idempotent and releases all tracked resources',function()
     press(byText('×'))
     assert(not hub.Running and hub.Screen.Destroyed and environment.ZyonHub==nil)
-    assert(runService.bindings.ZYON_SMOOTH_AIM_V9==nil)
+    assert(runService.bindings.ZYON_SMOOTH_AIM==nil)
     for _,connection in ipairs(hub.Connections) do assert(not connection.Connected) end
     hub.Stop()
 end)
