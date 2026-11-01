@@ -1,5 +1,5 @@
--- ZYON HUB v8 | Roblox Luau | Desktop + Mobile
--- Responsive cards, dedicated FOV controls, movable and lockable acquisition area.
+-- ZYON HUB v9 | Roblox Luau | Desktop + Mobile
+-- Persistent preferences, live target validation, and manual camera priority.
 
 local Players = game:GetService('Players')
 local RunService = game:GetService('RunService')
@@ -13,12 +13,15 @@ if env.ZyonHub and type(env.ZyonHub.Stop) == 'function' then
     pcall(env.ZyonHub.Stop)
 end
 
-local settings = {
+local settingValues = {
     ESP = true, Aim = true, IgnoreFriends = true, IgnoreTeam = true,
-    VisibleOnly = true, Smoothness = 9, FOV = 0.23,
+    Smoothness = 9, FOV = 0.23,
     ShowFOV = true, HubTransparency = 0.06, FillTransparency = 0.55,
     FOVX = 0.5, FOVY = 0.5, FOVLocked = true,
     MaxDistance = 350, ESPInterval = 0.3, TargetInterval = 0.12,
+    ForceFFA = false, RespectManualInput = true, ManualPause = 0.45,
+    Accent = 1, ActiveTab = 'aim', Minimized = false,
+    WindowX = 0.5, WindowY = 0.5, BubbleX = 0, BubbleY = 0.2, BubbleMoved = false,
 }
 local color = {
     bg = Color3.fromRGB(16,18,27), panel = Color3.fromRGB(26,29,41),
@@ -28,8 +31,142 @@ local color = {
 }
 local hub = {Running=true, Minimized=false, Target=nil,
     Friends={}, Highlights={}, Relations={}, Connections={}}
-settings.ForceFFA = false
 env.ZyonHub = hub
+
+-- Save only validated settings and explicit player classifications, never live objects.
+local saveConfig, requestSave
+local settings
+do
+    local HttpService = game:GetService('HttpService')
+    local profileKey = tostring(LP.UserId)
+    local gameKey = tostring(game.GameId ~= 0 and game.GameId or game.PlaceId)
+    local fileName = 'ZyonHub_'..profileKey..'.json'
+    local read = type(readfile)=='function' and readfile or env.readfile
+    local write = type(writefile)=='function' and writefile or env.writefile
+    local exists = type(isfile)=='function' and isfile or env.isfile
+    local diskAvailable = type(read)=='function' and type(write)=='function'
+    local profiles = type(env.ZyonHubProfiles)=='table' and env.ZyonHubProfiles or {}
+    env.ZyonHubProfiles = profiles
+    local relationsByGame = {}
+    local limits = {
+        Smoothness={1,20}, FOV={0.05,0.5}, HubTransparency={0,0.85}, FillTransparency={0,0.95},
+        FOVX={0,1}, FOVY={0,1}, MaxDistance={1,10000}, ESPInterval={0.05,5}, TargetInterval={0.03,2},
+        Accent={1,4}, WindowX={0,1}, WindowY={0,1}, BubbleX={0,1}, BubbleY={0,1}, ManualPause={0.1,2},
+    }
+    local function status(message)
+        hub.SaveStatus=message
+        if hub.OnSaveStatus then hub.OnSaveStatus(message) end
+    end
+    local function validPacket(packet)
+        return type(packet)=='table' and packet.Version==1 and type(packet.Settings)=='table'
+    end
+    local packet=profiles[profileKey]
+    if not validPacket(packet) then
+        packet=nil
+        if diskAvailable then
+            local canRead=true
+            if type(exists)=='function' then
+                local ok,result=pcall(exists,fileName)
+                canRead=not ok or result
+            end
+            if canRead then
+                local ok,contents=pcall(read,fileName)
+                if ok and type(contents)=='string' then
+                    local decoded,value=pcall(function() return HttpService:JSONDecode(contents) end)
+                    if decoded and validPacket(value) then
+                        packet=value
+                    else
+                        status('Arquivo invalido; usando configuracao inicial.')
+                    end
+                end
+            end
+        end
+    end
+    if packet then
+        for key,initial in pairs(settingValues) do
+            local value=packet.Settings[key]
+            if type(initial)=='boolean' and type(value)=='boolean' then
+                settingValues[key]=value
+            elseif type(initial)=='number' and type(value)=='number' and value==value
+                and value>-math.huge and value<math.huge and limits[key] then
+                local range=limits[key]
+                value=math.clamp(value,range[1],range[2])
+                if key=='Accent' or key=='Smoothness' then value=math.floor(value+0.5) end
+                settingValues[key]=value
+            elseif key=='ActiveTab' and table.find({'aim','fov','players','appearance'},value) then
+                settingValues[key]=value
+            end
+        end
+        if type(packet.Relations)=='table' then
+            for scope,entries in pairs(packet.Relations) do
+                if type(scope)=='string' and scope:match('^%d+$') and type(entries)=='table' then
+                    local clean={}
+                    for id,relation in pairs(entries) do
+                        if type(id)=='string' and id:match('^%d+$')
+                            and (relation=='enemy' or relation=='ally') then clean[id]=relation end
+                    end
+                    relationsByGame[scope]=clean
+                end
+            end
+        end
+    end
+    for id,relation in pairs(relationsByGame[gameKey] or {}) do
+        hub.Relations[tonumber(id)]=relation
+    end
+    local function snapshot()
+        local relations={}
+        for id,relation in pairs(hub.Relations) do relations[tostring(id)]=relation end
+        relationsByGame[gameKey]=relations
+        return {Version=1,Settings=table.clone(settingValues),Relations=relationsByGame}
+    end
+    local dirty,scheduled=false,false
+    saveConfig=function()
+        local current=snapshot()
+        profiles[profileKey]=current
+        if not dirty then return end
+        if not diskAvailable then
+            dirty=false
+            status('Salvo nesta sessao; ambiente sem acesso a arquivos.')
+            return
+        end
+        local encoded,contents=pcall(function() return HttpService:JSONEncode(current) end)
+        local written=false
+        if encoded then written=pcall(write,fileName,contents) end
+        if written then
+            dirty=false
+            status('Salvo neste dispositivo automaticamente.')
+        else
+            status('Falha ao gravar. Ajustes mantidos nesta sessao.')
+        end
+    end
+    requestSave=function()
+        dirty=true
+        profiles[profileKey]=snapshot()
+        status(diskAvailable and 'Salvando ajustes...' or 'Salvo nesta sessao; ambiente sem acesso a arquivos.')
+        if scheduled then return end
+        scheduled=true
+        -- Coalesce sliders and drags; no disk writes inside RenderStepped.
+        task.delay(0.4,function()
+            scheduled=false
+            if hub.Running and env.ZyonHub==hub then saveConfig() end
+        end)
+    end
+    settings=setmetatable({}, {
+        __index=settingValues,
+        __newindex=function(_,key,value)
+            if settingValues[key]==value then return end
+            settingValues[key]=value
+            requestSave()
+        end,
+    })
+    hub.SaveConfig=function() dirty=true; saveConfig() end
+    if not hub.SaveStatus then
+        status(diskAvailable and 'Salvamento automatico neste dispositivo.'
+            or 'Salvo nesta sessao; ambiente sem acesso a arquivos.')
+    end
+end
+
+
 
 -- ScreenInsets.None and WorldToViewportPoint share the viewport origin.
 -- Store a fraction so the chosen position survives window/orientation changes.
@@ -214,6 +351,25 @@ local function enemy(player)
         and player.Parent == Players
         and verdicts[player] == true
 end
+local deadCharacters=setmetatable({}, {__mode='k'})
+local function livingCharacter(player)
+    local char=player and player.Character
+    if not char or not char:IsDescendantOf(Workspace) or deadCharacters[char] then return nil end
+    local humanoid=char:FindFirstChildOfClass('Humanoid')
+    if not humanoid or humanoid.Health<=0 or humanoid:GetState()==Enum.HumanoidStateType.Dead then return nil end
+    for _,source in ipairs({player,char,humanoid}) do
+        for _,key in ipairs({'Dead','IsDead','Eliminated','Alive','IsAlive'}) do
+            local value=source:GetAttribute(key)
+            if value==nil then
+                local marker=source:FindFirstChild(key)
+                if marker and marker:IsA('BoolValue') then value=marker.Value end
+            end
+            if ((key=='Alive' or key=='IsAlive') and value==false)
+                or ((key=='Dead' or key=='IsDead' or key=='Eliminated') and value==true) then return nil end
+        end
+    end
+    return char
+end
 local function clearHighlight(player)
     local highlight=hub.Highlights[player]
     if highlight then highlight:Destroy(); hub.Highlights[player]=nil end
@@ -222,9 +378,8 @@ local function updateHighlight(player)
     if not settings.ESP or not enemy(player) then
         clearHighlight(player); return false
     end
-    local char=player.Character
-    local humanoid=char and char:FindFirstChildOfClass('Humanoid')
-    if not char or not humanoid or humanoid.Health <= 0 then
+    local char=livingCharacter(player)
+    if not char then
         clearHighlight(player); return false
     end
     local highlight=hub.Highlights[player]
@@ -245,84 +400,167 @@ end
 local rayParams=RaycastParams.new()
 rayParams.FilterType=Enum.RaycastFilterType.Exclude
 rayParams.IgnoreWater=true
-local function visible(camera, part)
-    if not settings.VisibleOnly then return true end
-    rayParams.FilterDescendantsInstances = LP.Character and {LP.Character} or {}
+local function visible(camera, part, position)
+    rayParams.FilterDescendantsInstances = LP.Character and {LP.Character,camera} or {camera}
     local origin=camera.CFrame.Position
-    local result=Workspace:Raycast(origin,part.Position-origin,rayParams)
+    -- Test exactly the point the camera will aim at, on every tracking frame.
+    local result=Workspace:Raycast(origin,position-origin,rayParams)
     return result == nil or result.Instance:IsDescendantOf(part.Parent)
 end
 local function aimPart(player)
     if not enemy(player) then return nil end
-    local char=player.Character
-    local humanoid=char and char:FindFirstChildOfClass('Humanoid')
-    if not humanoid or humanoid.Health <= 0 then return nil end
-    return char:FindFirstChild('HumanoidRootPart') or char:FindFirstChild('Head')
+    local char=livingCharacter(player)
+    if not char then return nil end
+    local part=char:FindFirstChild('HumanoidRootPart') or char:FindFirstChild('Head')
+    return part and part:IsA('BasePart') and part or nil
 end
--- Stable center-mass tracking avoids chasing the head's idle animations.
 local function aimPosition(part)
-    if part.Name=='HumanoidRootPart' then
-        return part.Position+Vector3.new(0,1.1,0)
-    end
+    if part.Name=='HumanoidRootPart' then return part.Position+Vector3.new(0,1.1,0) end
     return part.Position
 end
-
+local function targetInfo(camera,part)
+    if not part or not part.Parent or not part:IsA('BasePart') then return nil end
+    local char=part.Parent
+    local player=Players:GetPlayerFromCharacter(char)
+    -- A corpse from a previous Character must never remain a valid target.
+    if not player or not enemy(player) or livingCharacter(player)~=char then return nil end
+    local position=aimPosition(part)
+    if (position-camera.CFrame.Position).Magnitude>settings.MaxDistance then return nil end
+    local point,onScreen=camera:WorldToViewportPoint(position)
+    if not onScreen or point.Z<=0 then return nil end
+    local center=fovCenter(camera.ViewportSize)
+    local delta=Vector2.new(point.X,point.Y)-center
+    local distance=delta.X*delta.X+delta.Y*delta.Y
+    local radius=math.min(camera.ViewportSize.X,camera.ViewportSize.Y)*settings.FOV
+    if distance>radius*radius or not visible(camera,part,position) then return nil end
+    return position,point,distance
+end
 local function findTarget()
     local camera=Workspace.CurrentCamera
     if not camera then return nil end
-    local viewport=camera.ViewportSize
-    local center=fovCenter(viewport)
-    local radius=math.min(viewport.X,viewport.Y)*settings.FOV
-    local best=radius*radius
-
-    -- Keep the previous target while it remains near the selected FOV.
-    -- This prevents rapid switching between overlapping players.
-    local current=hub.Target
-    if current and current.Parent then
-        local owner=Players:GetPlayerFromCharacter(current.Parent)
-        local humanoid=current.Parent:FindFirstChildOfClass('Humanoid')
-        if owner and enemy(owner) and humanoid and humanoid.Health>0
-            and (aimPosition(current)-camera.CFrame.Position).Magnitude<=settings.MaxDistance
-            and visible(camera,current) then
-            local point,onScreen=camera:WorldToViewportPoint(aimPosition(current))
-            if onScreen and point.Z>0 then
-                local dx,dy=point.X-center.X,point.Y-center.Y
-                if dx*dx+dy*dy <= best*1.25 then
-                    return current
-                end
-            end
-        end
-    end
-
-    local closest=nil
+    -- Keep a target only while every eligibility check still passes.
+    if hub.Target and targetInfo(camera,hub.Target) then return hub.Target end
+    local closest,best=nil,math.huge
     for _,player in ipairs(Players:GetPlayers()) do
         local part=aimPart(player)
         if part then
-            local position=aimPosition(part)
-            if (position-camera.CFrame.Position).Magnitude<=settings.MaxDistance then
-                local point,onScreen=camera:WorldToViewportPoint(position)
-                if onScreen and point.Z>0 then
-                    local dx,dy=point.X-center.X,point.Y-center.Y
-                    local dist2=dx*dx+dy*dy
-                    if dist2<best and visible(camera,part) then
-                        best=dist2
-                        closest=part
-                    end
-                end
-            end
+            local position,_,distance=targetInfo(camera,part)
+            if position and distance<best then best=distance; closest=part end
         end
     end
     return closest
+end
+
+-- Watch death and character replacement independently of the acquisition timer.
+local playerWatches={}
+local function watchPlayer(player)
+    local record={connections={},characterConnections={}}
+    playerWatches[player]=record
+    local function disconnect(list)
+        for _,connection in ipairs(list) do connection:Disconnect() end
+        table.clear(list)
+    end
+    local function release(character)
+        if player==LP or (hub.Target and hub.Target.Parent==character) then hub.Target=nil end
+        clearHighlight(player)
+    end
+    local function attach(character)
+        disconnect(record.characterConnections)
+        release(record.character)
+        record.character=character
+        local attached
+        local function attachHumanoid(humanoid)
+            if attached or not humanoid:IsA('Humanoid') then return end
+            attached=humanoid
+            local function died()
+                deadCharacters[character]=true
+                release(character)
+            end
+            table.insert(record.characterConnections,bind(humanoid.Died,died))
+            table.insert(record.characterConnections,bind(humanoid.HealthChanged,function(health)
+                if health<=0 then died() end
+            end))
+            table.insert(record.characterConnections,bind(humanoid.StateChanged,function(_,state)
+                if state==Enum.HumanoidStateType.Dead then died() end
+            end))
+            if humanoid.Health<=0 or humanoid:GetState()==Enum.HumanoidStateType.Dead then died() end
+        end
+        local humanoid=character:FindFirstChildOfClass('Humanoid')
+        if humanoid then attachHumanoid(humanoid) end
+        table.insert(record.characterConnections,bind(character.ChildAdded,attachHumanoid))
+    end
+    table.insert(record.connections,bind(player.CharacterAdded,attach))
+    table.insert(record.connections,bind(player.CharacterRemoving,function(character)
+        deadCharacters[character]=true
+        release(character)
+        disconnect(record.characterConnections)
+    end))
+    if player.Character then attach(player.Character) end
+end
+
+local focused=true
+local manualTouches={}
+local stickMoving=false
+hub.ManualUntil=0
+local function pauseForManualInput()
+    if not settings.RespectManualInput then return end
+    hub.Target=nil
+    hub.ManualUntil=os.clock()+settings.ManualPause
+end
+bind(UIS.InputBegan,function(input,processed)
+    if input.UserInputType==Enum.UserInputType.Touch and not processed then
+        local camera=Workspace.CurrentCamera
+        -- Leave the usual left-side movement joystick independent of camera aim.
+        if camera and input.Position.X>=camera.ViewportSize.X*0.4 then
+            manualTouches[input]={start=input.Position,moving=false}
+        end
+    end
+end)
+bind(UIS.InputChanged,function(input)
+    if input.UserInputType==Enum.UserInputType.MouseMovement then
+        if input.Delta.Magnitude>0.5 then pauseForManualInput() end
+    elseif input.KeyCode==Enum.KeyCode.Thumbstick2 then
+        stickMoving=input.Position.Magnitude>0.15
+        pauseForManualInput()
+    elseif input.UserInputType==Enum.UserInputType.Touch then
+        local touch=manualTouches[input]
+        if touch and (input.Position-touch.start).Magnitude>2 then
+            touch.moving=true
+            pauseForManualInput()
+        end
+    end
+end)
+bind(UIS.InputEnded,function(input)
+    local touch=manualTouches[input]
+    if touch then
+        manualTouches[input]=nil
+        if touch.moving then pauseForManualInput() end
+    end
+end)
+bind(UIS.WindowFocusReleased,function()
+    focused=false
+    hub.Target=nil
+    table.clear(manualTouches)
+    stickMoving=false
+    saveConfig()
+end)
+bind(UIS.WindowFocused,function() focused=true; pauseForManualInput() end)
+local function manualCameraActive()
+    if (hub.Interacting or 0)>0 then return true end
+    if not settings.RespectManualInput then return false end
+    if stickMoving or os.clock()<hub.ManualUntil then return true end
+    for _,touch in pairs(manualTouches) do if touch.moving then return true end end
+    return false
 end
 
 -- UI stays scoped so the standalone script remains below Luau's local limit.
 do
     local W, H = 368, 540
     local ui, accentText, accentFill, accentStroke, surfaces = {}, {}, {}, {}, {}
-    local activeTab = 'aim'
+    local activeTab = settings.ActiveTab
     local rebuildRoster, refresh, setLocked, refreshFov, resize
     local screen = create('ScreenGui', {
-        Name='ZyonHubV8', ResetOnSpawn=false, IgnoreGuiInset=true,
+        Name='ZyonHubV9', ResetOnSpawn=false, IgnoreGuiInset=true,
         ScreenInsets=Enum.ScreenInsets.None, DisplayOrder=1000,
         ZIndexBehavior=Enum.ZIndexBehavior.Sibling,
     }, PlayerGui)
@@ -377,6 +615,8 @@ do
         local function cancel()
             if not active then return end
             active = nil
+            hub.Interacting=math.max(0,(hub.Interacting or 1)-1)
+            pauseForManualInput()
             if finish then finish() end
         end
         bind(handle.InputBegan, function(input)
@@ -384,6 +624,8 @@ do
                 and input.UserInputType ~= Enum.UserInputType.MouseButton1) then return end
             if begin(input.Position) == false then return end
             active = input
+            hub.Interacting=(hub.Interacting or 0)+1
+            pauseForManualInput()
         end)
         bind(UIS.InputChanged, function(input)
             if not active then return end
@@ -409,7 +651,7 @@ do
     local header = create('Frame', {BackgroundTransparency=1, Size=UDim2.new(1,0,0,72)}, main)
     accentLabel(header, 'ZYON', 18,10,145,28,23,color.purple,true)
     text(header, 'HUB  /  CONTROLE EM TEMPO REAL', 19,40,245,18,9,color.muted)
-    local version = text(header, 'V8', 169,15,36,21,10,color.muted,true)
+    local version = text(header, 'V9', 169,15,36,21,10,color.muted,true)
     version.TextXAlignment = Enum.TextXAlignment.Center
     version.BackgroundColor3 = color.panel
     version.BackgroundTransparency = 0
@@ -548,6 +790,11 @@ do
         clearTarget()
         refresh()
     end)
+    ui.manual = toggle(aimPage,'Priorizar camera manual','Solta a mira enquanto voce move a camera.',settings.RespectManualInput,function(value)
+        settings.RespectManualInput=value
+        clearTarget()
+        ui.manual.set(value)
+    end)
     slider(aimPage,'SENSIBILIDADE',1,20,settings.Smoothness,
         function(value) return string.format('%.0f / 20',value) end,
         function(value) settings.Smoothness=value end)
@@ -641,6 +888,7 @@ do
                 if not hub.Running or player.Parent~=Players then return end
                 local old=hub.Relations[player.UserId]
                 hub.Relations[player.UserId]=old==nil and 'enemy' or old=='enemy' and 'ally' or nil
+                requestSave()
                 refreshTeamCache()
                 clearTarget()
                 for who in pairs(hub.Highlights) do
@@ -676,6 +924,9 @@ do
     end
     local function setAccent(chosen)
         color.purple=chosen
+        for index,theme in ipairs(themes) do
+            if theme[2]==chosen then settings.Accent=index; break end
+        end
         for _,object in ipairs(accentText) do object.TextColor3=chosen end
         for _,object in ipairs(accentFill) do object.BackgroundColor3=chosen end
         for _,object in ipairs(accentStroke) do object.Color=chosen end
@@ -708,6 +959,13 @@ do
         settings.FillTransparency=value/100
         for _,highlight in pairs(hub.Highlights) do highlight.FillTransparency=settings.FillTransparency end
     end)
+    local saveCard=card(appearancePage,120)
+    text(saveCard,'CONFIGURACOES',14,8,260,23,12,color.white,true)
+    local saveStatus=text(saveCard,hub.SaveStatus,14,34,W-56,34,10,color.muted)
+    saveStatus.TextWrapped=true
+    hub.OnSaveStatus=function(message) saveStatus.Text=message end
+    local saveButton=button(saveCard,'SALVAR AGORA',14,75,W-56,34)
+    bind(saveButton.Activated,hub.SaveConfig)
     local tip=card(appearancePage,65,true)
     local tipText=text(tip,'Arraste o cabecalho para mover o Hub.\nUse − para recolher e toque em Z para reabrir.\nShift direito: recolher / abrir. Esc: travar FOV.',2,0,W-34,65,10,color.muted)
     tipText.TextWrapped=true
@@ -813,13 +1071,18 @@ do
         local key=definition[1]
         bind(tabButtons[key].Activated,function()
             activeTab=key
+            settings.ActiveTab=key
             for name,object in pairs(pages) do object.Visible=name==key end
             applyTabs()
             if key=='players' then rebuildRoster() end
         end)
     end
 
-    local firstLayout=true
+    local function rememberPosition(window,xKey,yKey)
+        local v,size=viewport(),window.AbsoluteSize
+        if v.X>size.X then settings[xKey]=math.clamp(window.Position.X.Offset/(v.X-size.X),0,1) end
+        if v.Y>size.Y then settings[yKey]=math.clamp(window.Position.Y.Offset/(v.Y-size.Y),0,1) end
+    end
     resize=function()
         if not hub.Running then return end
         cancelFovDrag()
@@ -831,13 +1094,11 @@ do
         main.Size=UDim2.fromOffset(W,H)
         editScale.Scale=math.max(0.1,math.min(1,(v.X-16)/308))
         bubbleScale.Scale=math.max(0.1,math.min(1,math.min(v.X,v.Y)/100))
-        if firstLayout then
-            main.Position=UDim2.fromOffset(math.max(0,(v.X-W*factor)*0.5),
-                math.max(0,(v.Y-H*factor)*0.5))
-            firstLayout=false
-        end
-        clampWindow(main)
-        clampWindow(bubble)
+        main.Position=UDim2.fromOffset(math.max(0,v.X-W*factor)*settings.WindowX,
+            math.max(0,v.Y-H*factor)*settings.WindowY)
+        local bubbleSize=52*bubbleScale.Scale
+        bubble.Position=UDim2.fromOffset(math.max(0,v.X-bubbleSize)*settings.BubbleX,
+            math.max(0,v.Y-bubbleSize)*settings.BubbleY)
         refreshFov()
     end
     local viewportConnection
@@ -863,16 +1124,23 @@ do
             if onMoved then onMoved() end
         end)
     end
-    draggable(dragArea,main)
+    draggable(dragArea,main,function() rememberPosition(main,'WindowX','WindowY') end)
     local lastBubbleDrag=-math.huge
-    local bubblePositionSaved=false
+    local bubblePositionSaved=settings.BubbleMoved
     draggable(bubble,bubble,function()
         lastBubbleDrag=os.clock()
         bubblePositionSaved=true
+        settings.BubbleMoved=true
+        rememberPosition(bubble,'BubbleX','BubbleY')
     end)
     local function minimizeHub(value)
         hub.Minimized=value
-        if value and not bubblePositionSaved then bubble.Position=main.Position end
+        settings.Minimized=value
+        if value and not bubblePositionSaved then
+            bubble.Position=main.Position
+            clampWindow(bubble)
+            rememberPosition(bubble,'BubbleX','BubbleY')
+        end
         main.Visible=not value
         bubble.Visible=value
         resize()
@@ -889,49 +1157,56 @@ do
     end)
     bind(UIS.WindowFocusReleased,function()
         if not settings.FOVLocked then setLocked(true) end
+        saveConfig()
     end)
-    setAccent(color.purple)
+    setAccent(themes[settings.Accent][2])
     setLocked(settings.FOVLocked)
+    hub.Minimized=settings.Minimized
+    main.Visible=not settings.Minimized
+    bubble.Visible=settings.Minimized
+    if activeTab=='players' then rebuildRoster() end
     watchCamera()
 end
 
 local elapsed=settings.TargetInterval
-local renderKey='ZYON_SMOOTH_AIM_V8'
+local renderKey='ZYON_SMOOTH_AIM_V9'
 RunService:BindToRenderStep(renderKey,Enum.RenderPriority.Camera.Value+1,function(dt)
-    if not hub.Running or not settings.Aim or not settings.FOVLocked then return end
     local camera=Workspace.CurrentCamera
-    if not camera or camera.CameraType==Enum.CameraType.Scriptable then return end
+    if not hub.Running or not focused or not settings.Aim or not settings.FOVLocked
+        or not camera or camera.CameraType==Enum.CameraType.Scriptable
+        or not livingCharacter(LP) or manualCameraActive() then
+        hub.Target=nil
+        elapsed=settings.TargetInterval
+        return
+    end
     elapsed=elapsed+dt
     if elapsed>=settings.TargetInterval then
         elapsed=0
         hub.Target=findTarget()
     end
     local part=hub.Target
-    if not part or not part.Parent then return end
-    local char=part.Parent
-    local humanoid=char:FindFirstChildOfClass('Humanoid')
-    local player=Players:GetPlayerFromCharacter(char)
-    if not humanoid or humanoid.Health<=0 or not player or not enemy(player) then
-        hub.Target=nil; return
-    end
+    if not part then return end
+    -- Never steer using cached life, visibility, range, or FOV checks.
+    local goal,point=targetInfo(camera,part)
+    if not goal then hub.Target=nil; return end
     local origin=camera.CFrame.Position
-    local goal=aimPosition(part)
     if (goal-origin).Magnitude<0.01 then return end
-    local point,onScreen=camera:WorldToViewportPoint(goal)
-    if onScreen then
-        local mid=camera.ViewportSize*0.5
-        local dx,dy=point.X-mid.X,point.Y-mid.Y
-        -- Two-pixel dead zone prevents constant camera micro-jitter.
-        if dx*dx+dy*dy<4 then return end
-    end
+    local mid=camera.ViewportSize*0.5
+    local dx,dy=point.X-mid.X,point.Y-mid.Y
+    if dx*dx+dy*dy<4 then return end
     local alpha=1-math.exp(-settings.Smoothness*math.min(dt,0.05))
     camera.CFrame=camera.CFrame:Lerp(CFrame.lookAt(origin,goal),alpha)
 end)
 
-bind(Players.PlayerAdded,registerFriend)
+bind(Players.PlayerAdded,function(player) registerFriend(player); watchPlayer(player) end)
 bind(Players.PlayerRemoving,function(player)
     clearHighlight(player)
-    hub.Relations[player.UserId]=nil
+    local record=playerWatches[player]
+    if record then
+        for _,connection in ipairs(record.connections) do connection:Disconnect() end
+        for _,connection in ipairs(record.characterConnections) do connection:Disconnect() end
+        playerWatches[player]=nil
+    end
     verdicts[player]=nil
     hub.Friends[player.UserId]=nil
     if hub.Target and player.Character and
@@ -939,7 +1214,7 @@ bind(Players.PlayerRemoving,function(player)
         hub.Target=nil
     end
 end)
-for _,player in ipairs(Players:GetPlayers()) do registerFriend(player) end
+for _,player in ipairs(Players:GetPlayers()) do registerFriend(player); watchPlayer(player) end
 
 task.spawn(function()
     local lastTeamRefresh=-math.huge
@@ -963,6 +1238,7 @@ end)
 
 function hub.Stop()
     if not hub.Running then return end
+    saveConfig()
     hub.Running=false; hub.Target=nil
     RunService:UnbindFromRenderStep(renderKey)
     for _,connection in ipairs(hub.Connections) do
@@ -972,4 +1248,4 @@ function hub.Stop()
     hub.Screen:Destroy()
     if env.ZyonHub==hub then env.ZyonHub=nil end
 end
-print('[ZYON] Hub v8 | interface responsiva, FOV movel e trava de posicao')
+print('[ZYON] Hub v9 | ajustes persistentes, alvos revalidados e controle manual prioritario')

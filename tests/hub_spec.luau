@@ -19,8 +19,8 @@ test('unlock, pause aiming, and reveal editing controls',function()
     assert(named('FovEditBar').Visible)
     -- The camera double has no Lerp method: a mistaken aim pass would error.
     hub.Target={Parent={}}
-    runService.bindings.ZYON_SMOOTH_AIM_V8(1)
-    assert(hub.Target~=nil)
+    runService.bindings.ZYON_SMOOTH_AIM_V9(1)
+    assert(hub.Target==nil)
     hub.Target=nil
 end)
 test('mouse drag moves the guide and clamps to viewport',function()
@@ -111,7 +111,7 @@ test('target acquisition uses the moved guide center',function()
         player.Name='Opponent'..id; player.DisplayName=player.Name; player.UserId=id
         -- The service test double is not an Instance, so assign this pointer directly.
         player._props.Parent=players
-        local character=Instance.new('Model'); player.Character=character
+        local character=Instance.new('Model'); character.Parent=workspace; player.Character=character
         local head=Instance.new('Part'); head.Name='Head'; head.Position=position; head.Parent=character
         local humanoid=Instance.new('Humanoid'); humanoid.Health=100; humanoid.Parent=character
         table.insert(players.list,player)
@@ -164,13 +164,13 @@ test('re-running cleans up the old GUI and input connections',function()
     hub=environment.ZyonHub
     assert(oldHub~=hub and not oldHub.Running and oldHub.Screen.Destroyed)
     for _,connection in ipairs(oldHub.Connections) do assert(not connection.Connected) end
-    assert(runService.bindings.ZYON_SMOOTH_AIM_V8)
+    assert(runService.bindings.ZYON_SMOOTH_AIM_V9)
 end)
 test('close is idempotent and releases all tracked resources',function()
     press(byText('×'))
     assert(not hub.Running and hub.Screen.Destroyed and environment.ZyonHub==nil)
-    assert(runService.bindings.ZYON_SMOOTH_AIM_V8==nil)
+    assert(runService.bindings.ZYON_SMOOTH_AIM_V9==nil)
     for _,connection in ipairs(hub.Connections) do assert(not connection.Connected) end
     hub.Stop()
 end)
-print(string.format('%d behavioral checks passed',passed))
+

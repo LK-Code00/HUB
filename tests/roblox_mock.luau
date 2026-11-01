@@ -86,7 +86,7 @@ end
 local Instance={}
 function Instance.new(class)
     local object=setmetatable({_props={ClassName=class,Name=class},_children={},_signals={}},objectMeta)
-    for _,key in ipairs({'InputBegan','InputChanged','InputEnded','Activated'}) do object[key]=signal() end
+    for _,key in ipairs({'InputBegan','InputChanged','InputEnded','Activated','Died','HealthChanged','StateChanged','CharacterAdded','CharacterRemoving','ChildAdded'}) do object[key]=signal() end
     object.Visible=true
     object.Size=UDim2.fromOffset(0,0)
     object.Position=UDim2.fromOffset(0,0)
@@ -102,13 +102,14 @@ function methods:FindFirstChildOfClass(class)
     for _,child in ipairs(self._children) do if child.ClassName==class then return child end end
 end
 function methods:IsA(class)
-    return self.ClassName==class or (class=='GuiObject' and
+    return self.ClassName==class or (class=='BasePart' and self.ClassName=='Part') or (class=='GuiObject' and
         table.find({'Frame','TextButton','TextLabel','ScrollingFrame'},self.ClassName)~=nil)
 end
 function methods:GetPropertyChangedSignal(key)
     if not self._signals[key] then self._signals[key]=signal() end
     return self._signals[key]
 end
+function methods:GetState() return self.State or Enum.HumanoidStateType.Running end
 function methods:GetAttribute(key) return self._props[key..'Attribute'] end
 function methods:GetFullName() return self.Name end
 function methods:IsDescendantOf(ancestor)
@@ -127,7 +128,12 @@ function methods:Destroy()
     self.Destroyed=true
 end
 local RaycastParams={new=function() return {} end}
-local task={queue={}}
+local task={queue={},delays={}}
+function task.delay(_,callback) table.insert(task.delays,callback) end
+function task.runDelays()
+    local pending=task.delays; task.delays={}
+    for _,callback in ipairs(pending) do callback() end
+end
 function task.spawn(callback) table.insert(task.queue,callback) end
 function task.defer(callback) table.insert(task.queue,callback) end
 function task.wait() coroutine.yield() end
@@ -142,7 +148,7 @@ function players:GetPlayers() return table.clone(self.list) end
 function players:GetPlayerFromCharacter(character)
     for _,player in ipairs(self.list) do if player.Character==character then return player end end
 end
-local input={InputBegan=signal(),InputChanged=signal(),InputEnded=signal(),WindowFocusReleased=signal()}
+local input={InputBegan=signal(),InputChanged=signal(),InputEnded=signal(),WindowFocusReleased=signal(),WindowFocused=signal()}
 function input:GetFocusedTextBox() return nil end
 local runService={bindings={}}
 function runService:BindToRenderStep(key,_,callback) self.bindings[key]=callback end
@@ -153,9 +159,52 @@ camera.CFrame={Position=vec(0,0,0)}
 function camera:WorldToViewportPoint(position) return position,true end
 local workspace=Instance.new('Workspace'); workspace.CurrentCamera=camera
 function workspace:Raycast() return nil end
-local game={}
+local function makeCharacter(player,position)
+    local character=Instance.new('Model'); character.Parent=workspace
+    player.Character=character
+    local head=Instance.new('Part'); head.Name='Head'; head.Position=position; head.Parent=character
+    local humanoid=Instance.new('Humanoid'); humanoid.Health=100; humanoid.Parent=character
+    return character,head,humanoid
+end
+makeCharacter(lp,vec(0,0,0))
+local function copy(value)
+    if type(value)~='table' then return value end
+    local result={}
+    for key,item in pairs(value) do result[key]=copy(item) end
+    return result
+end
+-- Serialization and disk doubles preserve independent snapshots across reloads.
+local jsonValues={}
+local http={}
+function http:JSONEncode(value)
+    local token='json:'..tostring(#jsonValues+1)
+    table.insert(jsonValues,copy(value))
+    return token
+end
+function http:JSONDecode(value)
+    local index=type(value)=='string' and tonumber(value:match('^json:(%d+)$'))
+    assert(index and jsonValues[index],'invalid JSON')
+    return copy(jsonValues[index])
+end
+local disk={files={},writes=0,fail=false}
+local function readfile(name) return assert(disk.files[name],'file missing') end
+local function writefile(name,contents)
+    if disk.fail then error('write denied') end
+    disk.files[name]=contents; disk.writes+=1
+end
+local function isfile(name) return disk.files[name]~=nil end
+objects.aimWrites=0
+local CFrame={}
+local function frame(position)
+    return {Position=position,Lerp=function(self,goal,_)
+        objects.aimWrites+=1
+        return self
+    end}
+end
+function CFrame.lookAt(origin,goal) return {Position=origin,Goal=goal} end
+local game={GameId=42,PlaceId=420}
 function game:GetService(name)
-    return ({Players=players,RunService=runService,UserInputService=input,Workspace=workspace})[name]
+    return ({Players=players,RunService=runService,UserInputService=input,Workspace=workspace,HttpService=http})[name]
 end
 local function find(parent,key,value)
     for _,child in ipairs(parent:GetChildren()) do
@@ -170,7 +219,7 @@ local function control(title)
     local caption=byText(title)
     return assert(caption.Parent:FindFirstChildOfClass('TextButton'),'No control: '..title)
 end
-local function pointer(kind,x,y) return {UserInputType=Enum.UserInputType[kind],Position=vec(x,y)} end
+local function pointer(kind,x,y) return {UserInputType=Enum.UserInputType[kind],Position=vec(x,y),Delta=vec(0,0),KeyCode=Enum.KeyCode.Unknown} end
 local function press(object) object.Activated:Fire() end
 local function near(a,b) assert(math.abs(a-b)<0.001,tostring(a)..' != '..tostring(b)) end
 local passed=0
