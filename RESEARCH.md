@@ -2,6 +2,8 @@
 
 ## Resultado e limites
 
+Atualizacao mais recente: o diagnostico de ranked mostrou um adversario como modelo sem Player associado; a correcao e os testes estao na ultima secao deste documento. As secoes anteriores preservam o historico da investigacao.
+
 Foram identificadas e corrigidas falhas verificaveis no classificador do Hub. A pesquisa publica **nao revela a estrutura replicada das rankeds**, portanto esta entrega nao certifica funcionamento em todos os modos. O relato recebido confirma que o Hub permanece visivel na ranked; o funcionamento com classificacao manual ainda nao foi testado no jogo.
 
 A compatibilidade agora depende dos sinais da partida e do personagem, sem lista fechada de nomes de modos nem bloqueio por um unico PlaceId. Ainda e necessario conferir uma ranked real com o diagnostico incorporado.
@@ -78,3 +80,11 @@ O Hub separa agora identidade da partida de modo de combate. Auto consulta campo
 Em FFA confirmado, participantes vivos da mesma partida podem ser adversarios mesmo no mesmo grupo A. Em Equipes, o grupo local continua excluido. Partidas diferentes, personagens em armazenamento de mortos, aliados manuais e demais filtros continuam bloqueados. Um adversario elegivel para ESP nao e necessariamente elegivel para a mira: no diagnostico recebido, todos os adversarios estavam sem linha de visao, e o unico adversario na tela estava fora do FOV.
 
 Foram acrescentados nove testes para FFA com grupo unico, selecao via interface, modo atual FFA_Standard, escopo por partida, mudanca para equipes, limpeza de alvos/ESP, filtros e nao persistencia da escolha. **Compilacao Luau e 67 testes simulados passaram**; a atualizacao ainda precisa de conferencia no cliente Roblox.
+
+## Diagnostico de ranked: adversario ausente de Players
+
+O novo relatorio recebido mostra universo `7264587281`, place `109397169461300`, apenas um Player, local no grupo B e `A/ghostspy097` com Humanoid de vida 100, sem `Player.Character` associado. Isso comprova a presenca do modelo na arvore replicada e sua ausencia da associacao consultada naquele cliente. Nao comprova a implementacao interna do servidor nem que todas as rankeds usem esse mecanismo.
+
+A versao anterior ignorava o modelo durante a busca/ESP e o rejeitava na validacao da mira. A correção usa modelos imediatos A/B da mesma partida local como candidatos adicionais. Lado oposto e aceito mesmo com modo desconhecido; mesmo lado continua exigindo FFA confirmado. `LastModesSelected` continua sendo historico de fila, nao modo atual. `ForceFFA` generico nao e necessario para este caso.
+
+Modelos sem Player nao recebem identidade inventada, consulta de amizade por nome ou classificacao persistente por UserId. Essa limitacao aparece no diagnostico. Morte, mudanca de grupo/partida, associacao posterior a Player e personagens antigos possuem verificacoes e limpeza de recursos. Onze cenarios novos passaram, totalizando 89 testes simulados e compilacao Luau aprovada. A verificacao final no cliente Roblox permanece pendente.

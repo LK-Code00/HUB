@@ -46,6 +46,10 @@ A selecao de modo e **somente para a partida atual**, identificada pela instanci
 
 O diagnostico lista tambem os modelos A/B da partida atual, ate 24 entradas, informando quando nao estao associados a um `Player.Character`. Modelos fora do Workspace, como os de `_DEAD_CHARACTERS`, nao sao elegiveis, mesmo se a vida exibida for positiva.
 
+Nas rankeds observadas, `Players` pode conter somente o jogador local, com o adversario replicado como modelo em `Workspace.Characters.<GUID>.A/B`. O Hub agora procura tambem esses modelos na partida local: grupo oposto e candidato mesmo com modo desconhecido; mesmo grupo exige FFA confirmado. A busca e restrita a esse universo e a essa estrutura, sem varrer NPCs do mapa inteiro.
+
+Modelos sem Player precisam de Humanoid vivo e peca de mira suportada. Vida, morte, parede, distancia, FOV e mudanca de partida continuam validados. O diagnostico informa a classificacao estrutural e a elegibilidade da mira. Sem identidade Player, amizade e classificacao manual por UserId ficam indisponiveis para aquele modelo; o Hub nao inventa identidade pelo nome. Se o Player passar a ser associado, os filtros normais voltam a valer. Personagens antigos ja conhecidos como Player nao entram pelo caminho de modelos.
+
 Em **Jogadores**, use **Gerar diagnostico** durante a partida. O relatorio mostra por que cada jogador foi incluido/bloqueado e as condicoes do personagem. **Copiar** usa o clipboard do ambiente, quando disponivel; caso contrario, imprime no console. O relatorio e local e nao e enviado automaticamente.
 
 Os campos opcionais **Equipe** e **Partida** aceitam nomes de atributos/ValueBases observados no diagnostico (ate 48 letras, numeros ou `_`). Deixe vazio para Auto. Esses campos ficam salvos. Use o seletor **Modo desta partida** para confirmar FFA ou Equipes quando faltarem dados atuais do modo.
@@ -110,7 +114,7 @@ luau-compile HUB.lua > /tmp/hub-bytecode.txt
 python3 tests/run.py /caminho/para/luau
 ```
 
-Os 78 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
+Os 89 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
 
 O teste usa uma simulacao pequena das APIs do Roblox. Ele verifica a logica e a ligacao dos eventos, mas nao substitui renderizacao, encaminhamento real de toque, fontes ou comportamento de camera dentro do Roblox.
 

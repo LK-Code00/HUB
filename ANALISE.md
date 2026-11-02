@@ -27,7 +27,7 @@ As alteracoes estao no arquivo independente `HUB.lua`. As APIs opcionais de arqu
 ## Validacao realizada
 
 - Compilacao do arquivo completo com Luau oficial 0.744, commit `32c28089305f488f901aaf1dbf3fd1cb65fa3d11`.
-- 78 verificacoes comportamentais aprovadas: 67 existentes e 11 novas.
+- 89 verificacoes comportamentais aprovadas: 67 iniciais, 11 de otimizacao e 11 para modelos de ranked.
 - Registro de conexoes manteve o mesmo tamanho apos 40 respawns e 40 renovacoes do listener de viewport; nenhuma entrada desconectada permaneceu no registro.
 - Cenario simulado com um candidato: um raycast na aquisicao e um na revalidacao periodica, sem segunda chamada no mesmo quadro.
 - Cenario com dois candidatos: candidato mais distante nao recebe raycast quando o mais proximo e visivel; recebe quando o mais proximo esta obstruido.
@@ -49,7 +49,7 @@ Estes resultados verificam logica simulada e compilacao, nao FPS, renderizacao o
 
 - Equipes e partidas genericas ainda dependem de atributos/ValueBases replicados e da atualizacao periodica. Trocas genericas podem levar aproximadamente 0,9 segundo mais o atraso de agendamento para refletir no cache. A estrutura A/B do Sniper Duels recebe verificacao adicional ao validar alvos.
 - O modo de partida precisa de dados atuais ou escolha manual. Pastas A/B e preferencias de fila nao demonstram, isoladamente, FFA ou equipes.
-- Personagens devem estar associados a `Player.Character`, ter Humanoid vivo e uma peca suportada. NPCs, modelos sem dono ou sistemas customizados de personagens nao sao cobertos automaticamente.
+- Personagens genericos precisam de associacao a `Player.Character`. No Sniper Duels, modelos diretos nas pastas A/B da partida local tambem sao reconhecidos, mesmo sem Player, com Humanoid vivo e peca suportada. Outros NPCs ou sistemas customizados nao sao cobertos automaticamente. Modelos sem Player nao possuem filtros de amizade ou classificacao por UserId.
 - A mira controla a camera local. Nao garante acerto, dano, compensacao de projeteis ou alteracao de regras do servidor. Respeitar controle manual pode manter a mira pausada enquanto houver entrada continua.
 - Highlight, limites de renderizacao do dispositivo, alcance de streaming e objetos ausentes no cliente continuam sujeitos ao Roblox. A distancia configurada limita a mira, nao os destaques.
 - O teste de visibilidade segue um raycast ao ponto de mira; materiais transparentes e regras especiais de colisao do jogo nao sao deduzidos pelo Hub.
@@ -58,3 +58,11 @@ Estes resultados verificam logica simulada e compilacao, nao FPS, renderizacao o
 - Testar em desktop e mobile: todos os controles, scroll das paginas maiores, arraste/toque, respawn, transicao lobby/partida, troca de camera, objetos graficos novos, fechamento e reexecucao.
 
 A revisao preserva o escopo das funcoes existentes e corrige falhas verificaveis. Integracoes adicionais de jogo dependem de dados observados naquele cliente e versao.
+
+## Correcao de ranked baseada no diagnostico recebido
+
+O cliente mostrou `Jogadores disponiveis: 1`, local em B e o modelo `A/ghostspy097` vivo, sem Player associado. A causa no codigo era dupla: `findTarget` e o ciclo do ESP enumeravam somente `Players:GetPlayers`, e `targetInfo` exigia `GetPlayerFromCharacter`. O modo desconhecido nao era o bloqueio para lados opostos; `ForceFFA` generico tambem nao podia corrigir a ausencia do candidato.
+
+A descoberta agora combina Players e modelos da partida, com validacao estrutural em tempo de uso, listeners de morte e limpeza quando o modelo sai do conjunto. Nenhuma consulta de identidade remota foi adicionada. A interface informa adversarios encontrados por modelo, e o diagnostico explica a indisponibilidade de amizade. Onze testes novos reproduzem o cliente com um Player, mira/ESP, ausencia de ForceFFA, equipes, FFA confirmado, morte com vida replicada atrasada, armazenamento de mortos, filtros geometricos, escopo por universo/partida, streaming tardio, associacao posterior e rejeicao de Character antigo.
+
+Os resultados sao de simulacao. Confirmar no cliente real gerando novo diagnostico apos carregar a atualizacao.

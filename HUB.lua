@@ -349,9 +349,13 @@ end
 -- Observed in a live Sniper Duels diagnostic:
 -- Workspace.Characters.{match-guid}.B.<Player.Character>.
 -- A/B identifies groups inside a match, not proof that the mode has teams.
+local knownPlayerCharacters=setmetatable({}, {__mode='k'})
+local function characterOf(subject)
+    return subject and (subject:IsA('Model') and subject or subject.Character)
+end
 local function sniperContext(player)
     if game.GameId~=7264587281 then return nil end
-    local char=player and player.Character
+    local char=characterOf(player)
     local side=char and char.Parent
     local match=side and side.Parent
     local root=match and match.Parent
@@ -510,6 +514,7 @@ function hub.GetDiagnostics()
                         table.insert(lines,side.Name..'/'..model.Name..' | Player='
                             ..(owner and owner.Name or 'sem Character associado')
                             ..' | Health='..tostring(human and human.Health))
+                        if not owner and hub.DescribeModel then table.insert(lines,hub.DescribeModel(model)) end
                     end
                 end
             end
@@ -520,7 +525,23 @@ function hub.GetDiagnostics()
     return table.concat(lines,'\n')
 end
 
+local function modelVerdict(model)
+    if not model:IsA('Model') or model==LP.Character then return false,'personagem local' end
+    if knownPlayerCharacters[model] or Players:GetPlayerFromCharacter(model) then
+        return false,'personagem gerenciado por Player'
+    end
+    if spectator(LP) then return false,'local no lobby / espectador' end
+    local structural,reason=sniperVerdict(model)
+    if structural~=true then return false,reason or 'fora da estrutura Sniper Duels' end
+    -- A name is not an identity. Reject stale replicas of visible Players, but
+    -- never invent a UserId or friend/manual relation for an unassociated model.
+    for _,player in ipairs(Players:GetPlayers()) do
+        if player.Name==model.Name then return false,'replica de Player com outro Character' end
+    end
+    return true,reason..' | modelo sem identidade Player; amizade indisponivel'
+end
 local function enemy(player)
+    if player:IsA('Model') then return modelVerdict(player) end
     if player==LP or player.Parent~=Players or verdicts[player]~=true then return false end
     -- Recheck the short ancestry chain live, so a side/round change cannot
     -- keep a stale target until the next metadata-cache refresh.
@@ -532,7 +553,7 @@ local function enemy(player)
 end
 local deadCharacters=setmetatable({}, {__mode='k'})
 local function livingCharacter(player)
-    local char=player and player.Character
+    local char=characterOf(player)
     if not char or not char:IsDescendantOf(Workspace) or deadCharacters[char] then return nil end
     local humanoid=char:FindFirstChildOfClass('Humanoid')
     if not humanoid or humanoid.Health<=0 or humanoid:GetState()==Enum.HumanoidStateType.Dead then return nil end
@@ -552,6 +573,63 @@ end
 local function clearHighlight(player)
     local highlight=hub.Highlights[player]
     if highlight then highlight:Destroy(); hub.Highlights[player]=nil end
+end
+-- Ranked clients may replicate opponents only as arena models. Discovery is
+-- bounded to the local match's immediate A/B children, never the entire world.
+local modelWatches={}
+local function candidates()
+    local result=Players:GetPlayers()
+    local seen={}
+    for _,player in ipairs(result) do
+        if player.Character then knownPlayerCharacters[player.Character]=true end
+    end
+    local context=sniperContext(LP)
+    if context then
+        for _,side in ipairs(context.match:GetChildren()) do
+            if side.Name=='A' or side.Name=='B' then
+                for _,model in ipairs(side:GetChildren()) do
+                    if model:IsA('Model') and modelVerdict(model) then
+                        seen[model]=true
+                        table.insert(result,model)
+                        local humanoid=model:FindFirstChildOfClass('Humanoid')
+                        local record=modelWatches[model]
+                        if record and record.humanoid~=humanoid then
+                            for _,connection in ipairs(record.connections) do unbind(connection) end
+                            modelWatches[model]=nil
+                            record=nil
+                        end
+                        if humanoid and not record then
+                            record={humanoid=humanoid,connections={}}
+                            modelWatches[model]=record
+                            local function died()
+                                deadCharacters[model]=true
+                                if hub.Target and hub.Target.Parent==model then hub.Target=nil end
+                                clearHighlight(model)
+                            end
+                            table.insert(record.connections,bind(humanoid.Died,died))
+                            table.insert(record.connections,bind(humanoid.HealthChanged,function(health)
+                                if health<=0 then died()
+                                elseif humanoid:GetState()~=Enum.HumanoidStateType.Dead then deadCharacters[model]=nil end
+                            end))
+                            table.insert(record.connections,bind(humanoid.StateChanged,function(previous,state)
+                                if state==Enum.HumanoidStateType.Dead then died()
+                                elseif previous==Enum.HumanoidStateType.Dead and humanoid.Health>0 then deadCharacters[model]=nil end
+                            end))
+                        end
+                    end
+                end
+            end
+        end
+    end
+    for model,record in pairs(modelWatches) do
+        if not seen[model] then
+            for _,connection in ipairs(record.connections) do unbind(connection) end
+            modelWatches[model]=nil
+            clearHighlight(model)
+            if hub.Target and hub.Target.Parent==model then hub.Target=nil end
+        end
+    end
+    return result
 end
 local function updateHighlight(player)
     if not settings.ESP or not enemy(player) then
@@ -603,7 +681,7 @@ end
 local function targetInfo(camera,part,skipVisibility)
     if not part or not part.Parent or not part:IsA('BasePart') then return nil end
     local char=part.Parent
-    local player=Players:GetPlayerFromCharacter(char)
+    local player=Players:GetPlayerFromCharacter(char) or char
     -- A corpse from a previous Character must never remain a valid target.
     if not player or not enemy(player) or livingCharacter(player)~=char then return nil end
     local position=aimPosition(part)
@@ -639,6 +717,15 @@ function hub.DescribePlayer(player)
     end
     return info
 end
+function hub.DescribeModel(model)
+    local allowed,reason=modelVerdict(model)
+    local part=aimPart(model)
+    local camera=Workspace.CurrentCamera
+    return (allowed and 'ESTRUTURA INCLUIDA: ' or 'BLOQUEADO: ')..reason
+        ..' | Vivo valido='..tostring(livingCharacter(model)~=nil)
+        ..' | Peca='..tostring(part and part.Name)
+        ..' | Mira elegivel='..tostring(camera~=nil and part~=nil and targetInfo(camera,part)~=nil)
+end
 local function findTarget()
     local camera=Workspace.CurrentCamera
     if not camera then return nil end
@@ -648,7 +735,7 @@ local function findTarget()
         if position then return hub.Target,position,point,distance end
     end
     local closest,best,bestPosition,bestPoint=nil,math.huge,nil,nil
-    for _,player in ipairs(Players:GetPlayers()) do
+    for _,player in ipairs(candidates()) do
         local part=aimPart(player)
         if part then
             local position,point,distance=targetInfo(camera,part,true)
@@ -677,6 +764,7 @@ local function watchPlayer(player)
         disconnect(record.characterConnections)
         release(record.character)
         record.character=character
+        knownPlayerCharacters[character]=true
         deadCharacters[character]=nil
         local attached
         local function attachHumanoid(humanoid)
@@ -1689,10 +1777,14 @@ local function updateBackground(now)
     if now-lastESPRefresh<settings.ESPInterval then return end
     lastESPRefresh=now
     local n=0
-    for _,player in ipairs(Players:GetPlayers()) do
-        if updateHighlight(player) then n=n+1 end
+    local source=teamSource
+    for _,player in ipairs(candidates()) do
+        if updateHighlight(player) then
+            n=n+1
+            if player:IsA('Model') then source='Sniper Duels: modelos da partida' end
+        end
     end
-    hub.UpdateStatus(n,teamSource)
+    hub.UpdateStatus(n,source)
 end
 task.spawn(function()
     while hub.Running do
@@ -1712,6 +1804,7 @@ function hub.Stop()
     end
     table.clear(hub.Connections)
     table.clear(playerWatches)
+    table.clear(modelWatches)
     table.clear(metadata)
     table.clear(verdicts)
     table.clear(hub.Decisions)

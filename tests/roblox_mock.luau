@@ -186,6 +186,7 @@ function camera:WorldToViewportPoint(position) return position,true end
 local workspace=Instance.new('Workspace'); workspace.CurrentCamera=camera
 function workspace:Raycast() return nil end
 local function makeCharacter(player,position)
+    if player.Character then player.Character.Parent=nil end
     local character=Instance.new('Model'); character.Parent=workspace
     player.Character=character
     local head=Instance.new('Part'); head.Name='Head'; head.Position=position; head.Parent=character
