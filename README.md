@@ -30,6 +30,14 @@ Enquanto a posicao estiver travada, arraste, sliders X/Y e centralizacao ficam d
 - Ocultar o circulo ou perder o foco da janela encerra o modo de edicao e trava a posicao atual.
 - O FOV e sua trava sao restaurados junto das demais configuracoes. Se voce salvar com a posicao destravada, a proxima execucao tambem abre em modo de edicao, com a mira pausada.
 
+## Sniper Duels: equipes, rankeds e diagnostico
+
+A investigacao e as fontes estao em [RESEARCH.md](RESEARCH.md). A deteccao prioriza marcadores de rodada, preserva equipes com ID zero, consulta containers de dados e trata revive no mesmo personagem. Nao ha garantia de todos os modos sem teste no jogo; a estrutura interna das rankeds nao e publica.
+
+Em **Jogadores**, use **Gerar diagnostico** durante a partida. O relatorio mostra por que cada jogador foi incluido/bloqueado e as condicoes do personagem. **Copiar** usa o clipboard do ambiente, quando disponivel; caso contrario, imprime no console. O relatorio e local e nao e enviado automaticamente.
+
+Os campos opcionais **Equipe** e **Partida** aceitam nomes de atributos/ValueBases observados no diagnostico (ate 48 letras, numeros ou `_`). Deixe vazio para Auto. Esses ajustes ficam salvos. Nao use `Forcar modo FFA` numa partida com equipes para contornar um campo desconhecido: classifique os jogadores manualmente enquanto verifica os dados.
+
 ## Amigos e classificacao manual
 
 Na aba **Jogadores**, a classificacao explicita tem prioridade: **Inimigo** permite selecionar inclusive amigos, mesmo se a consulta de amizade estiver pendente; **Aliado** exclui o jogador. Em **Auto**, os filtros de amizade, equipe e partida voltam a ser aplicados. A escolha afeta a selecao da mira e o ESP, e continua sendo salva por jogo.
@@ -90,7 +98,7 @@ luau-compile HUB.lua > /tmp/hub-bytecode.txt
 python3 tests/run.py /caminho/para/luau
 ```
 
-Os 40 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
+Os 49 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
 
 O teste usa uma simulacao pequena das APIs do Roblox. Ele verifica a logica e a ligacao dos eventos, mas nao substitui renderizacao, encaminhamento real de toque, fontes ou comportamento de camera dentro do Roblox.
 

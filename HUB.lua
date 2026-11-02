@@ -20,6 +20,7 @@ local settingValues = {
     FOVX = 0.5, FOVY = 0.5, FOVLocked = true,
     MaxDistance = 350, ESPInterval = 0.3, TargetInterval = 0.12,
     LowGraphics = false, ReduceParticles = false, ShaderPreset = 0, ShaderStrength = 0.5,
+    TeamMarker = '', MatchMarker = '',
     ForceFFA = false, RespectManualInput = true, ManualPause = 0.45,
     Accent = 1, ActiveTab = 'aim', Minimized = false,
     WindowX = 0.5, WindowY = 0.5, BubbleX = 0, BubbleY = 0.2, BubbleMoved = false,
@@ -93,6 +94,9 @@ do
                 local range=limits[key]
                 value=math.clamp(value,range[1],range[2])
                 if key=='Accent' or key=='Smoothness' or key=='ShaderPreset' then value=math.floor(value+0.5) end
+                settingValues[key]=value
+            elseif (key=='TeamMarker' or key=='MatchMarker') and type(value)=='string'
+                and #value<=48 and (value=='' or value:match('^[%w_]+$')) then
                 settingValues[key]=value
             elseif key=='ActiveTab' and table.find({'aim','fov','players','appearance','graphics'},value) then
                 settingValues[key]=value
@@ -211,140 +215,197 @@ local function registerFriend(player)
         end
     end)
 end
--- Sniper Duels has multiple duels and FFA modes. Public Roblox team
--- properties may be unset during a match; use replicated match/team markers
--- when they exist. Do not assume that neutral players are enemies.
-local TEAM_KEYS = {
-    'MatchTeam', 'DuelTeam', 'CurrentTeam', 'TeamId', 'TeamID',
-    'TeamName', 'TeamNumber', 'Team', 'Side', 'Squad', 'TeamColor',
-}
-local MATCH_KEYS = {
-    'MatchId', 'MatchID', 'CurrentMatchId', 'DuelId', 'DuelID',
-    'CurrentDuelId', 'ArenaId', 'ArenaID',
-}
-local MODE_KEYS = {'GameMode', 'MatchMode', 'Mode', 'CurrentMode'}
-
+-- Generic replicated-state adapter. These are candidate keys, not a claimed
+-- private Sniper Duels schema; confirmed sources/limitations are in RESEARCH.md.
+local TEAM_KEYS={'MatchTeam','DuelTeam','RoundTeam','RankedTeam','CurrentTeam',
+    'TeamId','TeamName','TeamNumber','Team','Side','Squad','TeamColor'}
+local MATCH_KEYS={'MatchId','CurrentMatchId','DuelId','CurrentDuelId','RankedMatchId','ArenaId'}
+local MODE_KEYS={'GameMode','MatchMode','RoundMode','Mode','CurrentMode'}
+local function keyName(key) return tostring(key):lower():gsub('[%s_%-]','') end
 local function normalized(value)
-    if value == nil or typeof(value) == 'boolean' then return nil end
-    if typeof(value) == 'Instance' then
-        return string.lower(value:GetFullName())
-    end
-    local text = string.lower(tostring(value)):gsub('%s+', '')
-    if text == '' or text == 'none' or text == 'nil' or text == 'neutral'
-        or text == 'lobby' or text == 'spectator' or text == 'waiting'
-        or text == '0' or text == '-1' then
-        return nil
-    end
+    if value==nil or type(value)=='boolean' then return nil end
+    if typeof(value)=='Instance' then return value:GetFullName() end
+    if type(value)~='string' and type(value)~='number' and typeof(value)~='BrickColor' then return nil end
+    local text=tostring(value):lower():gsub('%s+','')
+    if text=='' or text=='none' or text=='nil' or text=='neutral' or text=='lobby'
+        or text=='spectator' or text=='waiting' or text=='-1' then return nil end
+    -- Numeric zero is a valid identifier, not evidence of missing metadata.
     return text
 end
-
-local function readMarker(player, key)
-    -- Read only instances replicated to the client.
-    for _, source in ipairs({player, player.Character or player}) do
-        local attribute = source:GetAttribute(key)
-        local value = normalized(attribute)
-        if value then return value end
-
-        local obj = source:FindFirstChild(key)
-        if obj and obj:IsA('ValueBase') then
-            local ok, result = pcall(function() return obj.Value end)
-            if ok then
-                value = normalized(result)
-                if value then return value end
+local metadata={}
+local function snapshot(root)
+    local result={values={},sources={},raw={}}
+    local visited=0
+    local function visit(source,depth)
+        if visited>=24 then return end
+        visited=visited+1
+        local function add(key,value)
+            local canonical=keyName(key)
+            if result.raw[canonical]==nil then
+                result.raw[canonical]=value
+                result.values[canonical]=normalized(value)
+                result.sources[canonical]=source:GetFullName()..'.'..tostring(key)
             end
+        end
+        for key,value in pairs(source:GetAttributes()) do add(key,value) end
+        for _,child in ipairs(source:GetChildren()) do
+            if child:IsA('ValueBase') then
+                local ok,value=pcall(function() return child.Value end)
+                if ok then add(child.Name,value) end
+            end
+        end
+        if depth>=2 then return end
+        for _,child in ipairs(source:GetChildren()) do
+            local name=child.Name:lower()
+            if (child:IsA('Folder') or child:IsA('Configuration')) and
+                (name:find('match') or name:find('duel') or name:find('rank') or name:find('round')
+                or name:find('team') or name:find('state') or name:find('data') or name:find('stats') or name:find('arena')) then
+                visit(child,depth+1)
+            end
+        end
+    end
+    visit(root,0)
+    return result
+end
+local function playerSnapshot(player)
+    local record=snapshot(player)
+    if player.Character then
+        local character=snapshot(player.Character)
+        for key,value in pairs(character.raw) do
+            -- Character round data is fresher than persistent lobby metadata.
+            record.raw[key]=value
+            record.values[key]=character.values[key]
+            record.sources[key]=character.sources[key]
+        end
+    end
+    return record
+end
+local function readMarker(player,key)
+    local record=metadata[player]
+    return record and record.values[keyName(key)] or nil
+end
+local function keysWithCustom(custom,defaults)
+    if custom=='' then return defaults end
+    return {custom}
+end
+local function matchVerdict(other)
+    local any,shared=false,false
+    for _,key in ipairs(keysWithCustom(settings.MatchMarker,MATCH_KEYS)) do
+        local a,b=readMarker(LP,key),readMarker(other,key)
+        if a or b then any=true end
+        if a and b then
+            shared=true
+            if a~=b then return false,'outra partida: '..key end
+        end
+    end
+    -- A shared match is sufficient even when secondary aliases are absent.
+    if any and not shared then return false,'partida incompleta' end
+    return true,shared and 'partida confirmada' or 'sem marcador de partida'
+end
+local function modeOf(record)
+    if not record then return nil end
+    for _,key in ipairs(MODE_KEYS) do
+        local value=record.values[keyName(key)]
+        if value then
+            local token=value:gsub('[%s_%-]','')
+            if token=='ffa' or token=='freeforall' then return 'ffa' end
+            if token=='duel' or token=='duels' or token=='teams' or token=='tdm'
+                or token=='teamdeathmatch' or token:match('^%d+v%d+$') then return 'teams' end
+            -- Ranked/casual labels describe queues, not team structure.
         end
     end
     return nil
 end
-
-local function sharedMarker(other, keys)
-    for _, key in ipairs(keys) do
-        local mine = readMarker(LP, key)
-        local theirs = readMarker(other, key)
-        if mine and theirs then return mine, theirs, key end
-    end
-    return nil, nil, nil
-end
-
-local function isFFA()
-    for _, source in ipairs({LP, LP.Character or LP, Workspace}) do
-        for _, key in ipairs(MODE_KEYS) do
-            local value = normalized(source:GetAttribute(key))
-            if value then
-                if value == 'ffa' or value == 'freeforall' or
-                    value == 'free-for-all' then
-                    return true
-                end
-                -- A recognized team match mode is not FFA.
-                return false
-            end
-        end
-    end
-    return false
-end
-
-local function matchVerdict(other)
-    local mine, theirs = sharedMarker(other, MATCH_KEYS)
-    if mine and theirs and mine ~= theirs then return false end
-    -- If one player has a match identifier and the other does not,
-    -- treat them as unrelated/unknown, never a confirmed enemy.
-    for _, key in ipairs(MATCH_KEYS) do
-        local a, b = readMarker(LP, key), readMarker(other, key)
-        if (a and not b) or (b and not a) then return false end
-    end
-    return true
-end
-
+local currentMode='unknown'
 local function teamVerdict(other)
+    if currentMode=='ffa' then return true,'FFA detectado' end
+    for _,key in ipairs(keysWithCustom(settings.TeamMarker,TEAM_KEYS)) do
+        local a,b=readMarker(LP,key),readMarker(other,key)
+        if a and b then return a~=b,'campo: '..key end
+    end
+    if settings.TeamMarker~='' then return false,'campo de equipe ausente' end
     if LP.Team and other.Team and not LP.Neutral and not other.Neutral then
-        return LP.Team ~= other.Team, 'Roblox.Team'
+        return LP.Team~=other.Team,'Roblox.Team'
     end
-    if not LP.Neutral and not other.Neutral
-        and LP.TeamColor ~= other.TeamColor then
-        return true, 'Roblox.TeamColor'
+    if not LP.Neutral and not other.Neutral and LP.TeamColor~=other.TeamColor then
+        return true,'Roblox.TeamColor'
     end
-    local mine, theirs, key = sharedMarker(other, TEAM_KEYS)
-    if mine and theirs then
-        return mine ~= theirs, 'match.' .. key
-    end
-    if isFFA() then return true, 'FFA' end
-    -- Unknown != enemy: this is necessary in custom-team games.
-    return false, 'unknown'
+    return false,'equipe desconhecida'
 end
-
--- Cache the verdict; RenderStepped must not scan Attributes/ValueBases.
-local verdicts = {}
-local teamSource = 'unknown'
+local function spectator(player)
+    local record=metadata[player]
+    if not record then return false end
+    return record.raw.isspectating==true or record.raw.spectating==true or record.raw.inlobby==true
+end
+local verdicts={}
+local teamSource='unknown'
+hub.Decisions={}
 local function refreshTeamCache()
     if not hub.Running then return end
-    local resolved = 'unknown'
-    for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LP then
-            local relation = hub.Relations[p.UserId]
-            local allowed = hub.Friends[p.UserId] == 'other'
-                or not settings.IgnoreFriends
-            if relation == 'ally' then
-                allowed = false
-            elseif relation == 'enemy' then
-                -- Manually selected player: explicit classification wins.
-                allowed = true
-                resolved = 'manual'
-            elseif allowed then
-                allowed = matchVerdict(p)
-                if allowed and settings.IgnoreTeam then
-                    if settings.ForceFFA then
-                        resolved = 'FFA manual'
-                    else
-                        local identified, source = teamVerdict(p)
-                        allowed = identified
-                        if source ~= 'unknown' then resolved = source end
-                    end
+    local people=Players:GetPlayers()
+    metadata={}
+    for _,player in ipairs(people) do metadata[player]=playerSnapshot(player) end
+    currentMode=modeOf(metadata[LP]) or modeOf(snapshot(Workspace)) or 'unknown'
+    local resolved='unknown'
+    for _,p in ipairs(people) do
+        if p~=LP then
+            local relation=hub.Relations[p.UserId]
+            local allowed,reason=false,'equipe desconhecida'
+            if spectator(LP) or spectator(p) then reason='lobby / espectador'
+            elseif relation=='ally' then reason='aliado manual'
+            elseif relation=='enemy' then allowed=true; reason='inimigo manual'
+            elseif settings.IgnoreFriends and hub.Friends[p.UserId]~='other' then
+                reason=hub.Friends[p.UserId]=='friend' and 'amigo (Auto)' or 'amizade pendente / indisponivel'
+            else
+                allowed,reason=matchVerdict(p)
+                if allowed then
+                    if settings.ForceFFA then reason='FFA manual'
+                    elseif not settings.IgnoreTeam then reason='filtro de equipe desligado'
+                    else allowed,reason=teamVerdict(p) end
                 end
             end
-            verdicts[p] = allowed
+            verdicts[p]=allowed
+            hub.Decisions[p.UserId]={allowed=allowed,reason=reason}
+            if allowed then resolved=reason end
         end
     end
-    teamSource = resolved
+    teamSource=resolved
+end
+
+-- An explicit snapshot, not a claim that public HTTP metadata reveals teams.
+function hub.GetDiagnostics()
+    refreshTeamCache()
+    local lines={'ZYON | Diagnostico da partida',
+        'Universe: '..tostring(game.GameId)..' | Place: '..tostring(game.PlaceId),
+        'Sniper Duels: '..tostring(game.GameId==7264587281)..' | Modo detectado: '..currentMode,
+        'Aim: '..tostring(settings.Aim)..' | ESP: '..tostring(settings.ESP)..' | FOV travado: '..tostring(settings.FOVLocked),
+        'Campo equipe: '..(settings.TeamMarker~='' and settings.TeamMarker or 'Auto'),
+        'Campo partida: '..(settings.MatchMarker~='' and settings.MatchMarker or 'Auto')}
+    local function append(player,record)
+        local decision=hub.Decisions[player.UserId]
+        local char=player.Character
+        local human=char and char:FindFirstChildOfClass('Humanoid')
+        table.insert(lines,'\n'..player.Name..' | '..(decision and
+            ((decision.allowed and 'INCLUIDO: ' or 'BLOQUEADO: ')..decision.reason) or 'LOCAL'))
+        table.insert(lines,'Team='..tostring(player.Team)..' Neutral='..tostring(player.Neutral)
+            ..' Character='..(char and char:GetFullName() or 'ausente')
+            ..' Health='..tostring(human and human.Health))
+        if hub.DescribePlayer then table.insert(lines,hub.DescribePlayer(player)) end
+        local keys={}
+        for key in pairs(record.raw) do
+            if key:find('team') or key:find('match') or key:find('duel') or key:find('mode')
+                or key:find('rank') or key:find('round') or key:find('arena') or key:find('spectat')
+                or key=='alive' or key=='dead' or key=='inlobby' then table.insert(keys,key) end
+        end
+        table.sort(keys)
+        for i,key in ipairs(keys) do
+            if i>32 then break end
+            local value=record.raw[key]
+            table.insert(lines,record.sources[key]..' = '..tostring(value):sub(1,100))
+        end
+    end
+    for _,player in ipairs(Players:GetPlayers()) do append(player,metadata[player]) end
+    return table.concat(lines,'\n')
 end
 
 local function enemy(player)
@@ -412,8 +473,11 @@ local function aimPart(player)
     if not enemy(player) then return nil end
     local char=livingCharacter(player)
     if not char then return nil end
-    local part=char:FindFirstChild('HumanoidRootPart') or char:FindFirstChild('Head')
-    return part and part:IsA('BasePart') and part or nil
+    for _,name in ipairs({'HumanoidRootPart','Head','UpperTorso','Torso'}) do
+        local part=char:FindFirstChild(name)
+        if part and part:IsA('BasePart') then return part end
+    end
+    return nil
 end
 local function aimPosition(part)
     if part.Name=='HumanoidRootPart' then return part.Position+Vector3.new(0,1.1,0) end
@@ -435,6 +499,27 @@ local function targetInfo(camera,part)
     local radius=math.min(camera.ViewportSize.X,camera.ViewportSize.Y)*settings.FOV
     if distance>radius*radius or not visible(camera,part,position) then return nil end
     return position,point,distance
+end
+function hub.DescribePlayer(player)
+    local char=player.Character
+    local human=char and char:FindFirstChildOfClass('Humanoid')
+    local part=char and (char:FindFirstChild('HumanoidRootPart') or char:FindFirstChild('Head'))
+    local camera=Workspace.CurrentCamera
+    local info='Vivo valido='..tostring(livingCharacter(player)~=nil)
+        ..' Estado='..tostring(human and human:GetState())
+        ..' Peca='..tostring(part and part.Name)
+    if camera and part and part:IsA('BasePart') then
+        local position=aimPosition(part)
+        local point,onScreen=camera:WorldToViewportPoint(position)
+        local center=fovCenter(camera.ViewportSize)
+        local radius=math.min(camera.ViewportSize.X,camera.ViewportSize.Y)*settings.FOV
+        local dx,dy=point.X-center.X,point.Y-center.Y
+        info=info..' Distancia='..string.format('%.0f',(position-camera.CFrame.Position).Magnitude)
+            ..' Na tela='..tostring(onScreen and point.Z>0)
+            ..' No FOV='..tostring(dx*dx+dy*dy<=radius*radius)
+            ..' Visivel='..tostring(visible(camera,part,position))
+    end
+    return info
 end
 local function findTarget()
     local camera=Workspace.CurrentCamera
@@ -469,6 +554,7 @@ local function watchPlayer(player)
         disconnect(record.characterConnections)
         release(record.character)
         record.character=character
+        deadCharacters[character]=nil
         local attached
         local function attachHumanoid(humanoid)
             if attached or not humanoid:IsA('Humanoid') then return end
@@ -479,10 +565,17 @@ local function watchPlayer(player)
             end
             table.insert(record.characterConnections,bind(humanoid.Died,died))
             table.insert(record.characterConnections,bind(humanoid.HealthChanged,function(health)
-                if health<=0 then died() end
+                if health<=0 then died()
+                elseif humanoid:GetState()~=Enum.HumanoidStateType.Dead then
+                    -- A replicated positive-health transition permits a revive.
+                    deadCharacters[character]=nil
+                end
             end))
-            table.insert(record.characterConnections,bind(humanoid.StateChanged,function(_,state)
-                if state==Enum.HumanoidStateType.Dead then died() end
+            table.insert(record.characterConnections,bind(humanoid.StateChanged,function(previous,state)
+                if state==Enum.HumanoidStateType.Dead then died()
+                elseif previous==Enum.HumanoidStateType.Dead and humanoid.Health>0 then
+                    deadCharacters[character]=nil
+                end
             end))
             if humanoid.Health<=0 or humanoid:GetState()==Enum.HumanoidStateType.Dead then died() end
         end
@@ -928,6 +1021,57 @@ do
         refresh()
         rebuildRoster()
     end)
+    local mappingCard=card(playersPage,170)
+    text(mappingCard,'CAMPOS DA PARTIDA',14,8,280,23,12,color.white,true)
+    text(mappingCard,'Opcional: use nomes encontrados no diagnostico.',14,32,310,18,10,color.muted)
+    local mappingStatus=text(mappingCard,'Vazio = deteccao automatica.',14,140,310,20,10,color.muted)
+    local function markerInput(caption,key,y)
+        text(mappingCard,caption,14,y,90,32,11,color.muted)
+        local field=create('TextBox',{Name=key..'Input',Text=settings[key],PlaceholderText='Auto',
+            ClearTextOnFocus=false,TextColor3=color.white,PlaceholderColor3=color.muted,
+            BackgroundColor3=color.bg,BorderSizePixel=0,Font=Enum.Font.Gotham,TextSize=12,
+            Position=UDim2.fromOffset(105,y),Size=UDim2.fromOffset(220,32)},mappingCard)
+        corner(field,8)
+        bind(field.FocusLost,function()
+            local value=field.Text:match('^%s*(.-)%s*$') or ''
+            if #value>48 or (value~='' and not value:match('^[%w_]+$')) then
+                field.Text=settings[key]
+                mappingStatus.Text='Use ate 48 letras, numeros ou _.'
+                return
+            end
+            settings[key]=value
+            hub.Target=nil
+            refreshTeamCache()
+            mappingStatus.Text='Campo salvo; atualize o diagnostico.'
+        end)
+    end
+    markerInput('Equipe', 'TeamMarker',58)
+    markerInput('Partida', 'MatchMarker',100)
+    local diagnosticCard=card(playersPage,272)
+    local diagnose=button(diagnosticCard,'GERAR DIAGNOSTICO',14,10,202,34)
+    local copyReport=button(diagnosticCard,'COPIAR',222,10,104,34)
+    local reportScroll=create('ScrollingFrame',{BackgroundColor3=color.bg,BorderSizePixel=0,
+        Position=UDim2.fromOffset(14,54),Size=UDim2.new(1,-28,0,204),
+        CanvasSize=UDim2.fromOffset(0,0),AutomaticCanvasSize=Enum.AutomaticSize.Y,
+        ScrollBarThickness=3,ScrollingDirection=Enum.ScrollingDirection.Y},diagnosticCard)
+    corner(reportScroll,8)
+    local report=create('TextBox',{Name='MatchDiagnostics',Text='Gere durante a partida para ver os motivos dos filtros.',
+        BackgroundTransparency=1,ClearTextOnFocus=false,TextEditable=false,MultiLine=true,
+        TextWrapped=true,TextColor3=color.muted,TextSize=11,Font=Enum.Font.Code,
+        TextXAlignment=Enum.TextXAlignment.Left,TextYAlignment=Enum.TextYAlignment.Top,
+        Position=UDim2.fromOffset(6,6),Size=UDim2.new(1,-18,0,0),AutomaticSize=Enum.AutomaticSize.Y},reportScroll)
+    bind(diagnose.Activated,function()
+        report.Text=hub.GetDiagnostics()
+        reportScroll.CanvasPosition=Vector2.new(0,0)
+    end)
+    bind(copyReport.Activated,function()
+        report.Text=hub.GetDiagnostics()
+        local copy=type(setclipboard)=='function' and setclipboard or env.setclipboard
+        local ok=type(copy)=='function' and pcall(copy,report.Text)
+        if ok then copyReport.Text='COPIADO'
+        else print(report.Text); copyReport.Text='CONSOLE' end
+    end)
+
     local roster = card(playersPage,0,true)
     roster.AutomaticSize=Enum.AutomaticSize.Y
     create('UIListLayout',{Padding=UDim.new(0,8),SortOrder=Enum.SortOrder.LayoutOrder},roster)

@@ -78,4 +78,4 @@ test('restoration preserves newer property changes made by the game',function()
     assert(originalBloom.Enabled)
     hub.Stop()
 end)
-print(string.format('%d behavioral checks passed',passed))
+

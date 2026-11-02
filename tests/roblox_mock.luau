@@ -86,7 +86,7 @@ end
 local Instance={}
 function Instance.new(class)
     local object=setmetatable({_props={ClassName=class,Name=class},_children={},_signals={}},objectMeta)
-    for _,key in ipairs({'InputBegan','InputChanged','InputEnded','Activated','Died','HealthChanged','StateChanged','CharacterAdded','CharacterRemoving','ChildAdded','DescendantAdded'}) do object[key]=signal() end
+    for _,key in ipairs({'InputBegan','InputChanged','InputEnded','Activated','Died','HealthChanged','StateChanged','CharacterAdded','CharacterRemoving','ChildAdded','DescendantAdded','FocusLost'}) do object[key]=signal() end
     object.Visible=true
     object.Size=UDim2.fromOffset(0,0)
     object.Position=UDim2.fromOffset(0,0)
@@ -110,12 +110,20 @@ function methods:FindFirstChildOfClass(class)
     for _,child in ipairs(self._children) do if child.ClassName==class then return child end end
 end
 function methods:IsA(class)
-    return self.ClassName==class or (class=='PostEffect' and table.find({'BloomEffect','ColorCorrectionEffect','SunRaysEffect','BlurEffect','DepthOfFieldEffect'},self.ClassName)~=nil) or (class=='BasePart' and self.ClassName=='Part') or (class=='GuiObject' and
-        table.find({'Frame','TextButton','TextLabel','ScrollingFrame'},self.ClassName)~=nil)
+    return self.ClassName==class or (class=='ValueBase' and table.find({'StringValue','IntValue','NumberValue','BoolValue','ObjectValue'},self.ClassName)~=nil) or (class=='PostEffect' and table.find({'BloomEffect','ColorCorrectionEffect','SunRaysEffect','BlurEffect','DepthOfFieldEffect'},self.ClassName)~=nil) or (class=='BasePart' and self.ClassName=='Part') or (class=='GuiObject' and
+        table.find({'Frame','TextButton','TextLabel','TextBox','ScrollingFrame'},self.ClassName)~=nil)
 end
 function methods:GetPropertyChangedSignal(key)
     if not self._signals[key] then self._signals[key]=signal() end
     return self._signals[key]
+end
+function methods:GetAttributes()
+    local result={}
+    for key,value in pairs(self._props) do
+        local name=key:match('^(.-)Attribute$')
+        if name then result[name]=value end
+    end
+    return result
 end
 function methods:GetState() return self.State or Enum.HumanoidStateType.Running end
 function methods:GetAttribute(key) return self._props[key..'Attribute'] end
