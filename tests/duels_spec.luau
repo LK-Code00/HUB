@@ -118,4 +118,4 @@ test('R6 torso fallback works while head and root are absent',function()
     assert(selected()==targetHead)
     hub.Stop()
 end)
-print(string.format('%d behavioral checks passed',passed))
+

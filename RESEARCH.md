@@ -49,4 +49,20 @@ Os nomes candidatos, como MatchTeam ou RankedMatchId, sao heuristicas opcionais,
 5. Preencher **Campos da partida** apenas com chaves realmente observadas no relatorio. Vazio restaura a deteccao automatica. Os campos sao salvos no perfil atual.
 6. Conferir aliado e adversario em 1v1, equipes, FFA, ranked, revive, troca de rodada e retorno ao lobby. Em LTMs, nao assumir FFA somente pelo nome do modo.
 
-Compilacao Luau e **49 testes de comportamento** validam os cenarios simulados. Nao houve execucao no cliente Roblox nem validacao em partidas reais de Sniper Duels.
+Compilacao Luau e **58 testes de comportamento** validam os cenarios simulados. Nao houve execucao no cliente Roblox nem validacao em partidas reais de Sniper Duels.
+
+## Atualizacao com diagnostico de uma partida real
+
+O relato seguinte confirmou um disparo indevido em colega. O diagnostico mostrou o jogador local e outro jogador em `Workspace.Characters.{mesmo-guid}.B.<nome>`, ambos com `Team=nil` e `Neutral=true`. A decisao do colega era **INCLUIDO: FFA manual**. `LastModesSelected = 1v1,2v2` registra preferencias de fila; nao identifica equipe nem modo atual.
+
+A causa demonstrada e a combinacao de FFA manual com a ausencia de leitura da hierarquia de personagens. Foi acrescentado um adaptador restrito ao universo 7264587281, com comparacao por instancia da partida e nome do lado A/B:
+
+- mesma pasta de equipe: bloqueado, mesmo com FFA, filtro de equipe desligado ou uma classificacao manual antiga;
+- lados A/B diferentes na mesma partida: candidato, respeitando vida, amizade/relacao explicita, FOV e visibilidade;
+- partidas diferentes ou estrutura incompleta: bloqueado;
+- troca de lado/partida: revalidacao direta no acompanhamento, sem aguardar o cache;
+- fora do universo ou fora do formato reconhecido: o adaptador nao inventa equipes.
+
+A pasta **B** e sua correspondencia com colegas foram observadas. A estrutura simetrica **A** como lado oposto e uma inferencia limitada, coberta por testes sinteticos; ainda nao apareceu em um diagnostico de adversario enviado. O relatorio recebido continha apenas dois Players. O diagnostico agora enumera os modelos A/B da partida atual e sua associacao com Players para investigar adversarios ausentes, sem transforma-los automaticamente em alvos.
+
+Nove cenarios adicionais cobrem a reproducao com FFA ligado, ESP e mira, adversario A simulado, outra partida, estrutura incompleta, relacoes antigas, amizade, troca de equipe, perda de estrutura, escopo por universo e modelos sem Player associado. A compilacao e os **58 testes** passaram. A alteracao publicada ainda precisa de verificacao na ranked real.

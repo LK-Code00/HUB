@@ -11,10 +11,10 @@ import tempfile
 root = Path(__file__).resolve().parents[1]
 source = (root / 'HUB.lua').read_text()
 mock = (root / 'tests/roblox_mock.luau').read_text()
-spec = (root / 'tests/hub_spec.luau').read_text() + (root / 'tests/regression_spec.luau').read_text() + (root / 'tests/graphics_spec.luau').read_text() + (root / 'tests/duels_spec.luau').read_text()
+spec = (root / 'tests/hub_spec.luau').read_text() + (root / 'tests/regression_spec.luau').read_text() + (root / 'tests/graphics_spec.luau').read_text() + (root / 'tests/duels_spec.luau').read_text() + (root / 'tests/sniper_structure_spec.luau').read_text()
 # Expose private functions only in the generated test wrapper.
 script = mock + '\nlocal function startHub()\n' + source + '''
-return {settings=settings, findTarget=findTarget, refreshTeamCache=refreshTeamCache, watchPlayer=watchPlayer, targetInfo=targetInfo, livingCharacter=livingCharacter}
+return {settings=settings, findTarget=findTarget, refreshTeamCache=refreshTeamCache, watchPlayer=watchPlayer, targetInfo=targetInfo, livingCharacter=livingCharacter, updateHighlight=updateHighlight}
 end
 ''' + spec
 with tempfile.TemporaryDirectory(prefix='zyon-tests-') as temp:

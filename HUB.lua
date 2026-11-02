@@ -337,6 +337,32 @@ local function spectator(player)
     if not record then return false end
     return record.raw.isspectating==true or record.raw.spectating==true or record.raw.inlobby==true
 end
+-- Observed in a live Sniper Duels diagnostic:
+-- Workspace.Characters.{match-guid}.B.<Player.Character>.
+-- A/B is a narrow two-side adapter; unknown layouts are not guessed.
+local function sniperContext(player)
+    if game.GameId~=7264587281 then return nil end
+    local char=player and player.Character
+    local side=char and char.Parent
+    local match=side and side.Parent
+    local root=match and match.Parent
+    if not root or root.Parent~=Workspace or root.Name~='Characters'
+        or (side.Name~='A' and side.Name~='B') then return nil end
+    local id=match.Name
+    if id:sub(1,1)=='{' and id:sub(-1)=='}' then id=id:sub(2,-2) end
+    local a,b,c,d,e=id:match('^(%x+)%-(%x+)%-(%x+)%-(%x+)%-(%x+)$')
+    if not a or #a~=8 or #b~=4 or #c~=4 or #d~=4 or #e~=12 then return nil end
+    return {match=match,side=side.Name,id=match.Name}
+end
+local function sniperVerdict(other)
+    local mine,theirs=sniperContext(LP),sniperContext(other)
+    if not mine and not theirs then return nil end
+    if not mine or not theirs then return false,'Sniper Duels: estrutura de partida incompleta' end
+    if mine.match~=theirs.match then return false,'Sniper Duels: outra partida' end
+    if mine.side==theirs.side then return false,'Sniper Duels: mesma equipe '..mine.side end
+    return true,'Sniper Duels: equipe adversaria '..theirs.side
+end
+
 local verdicts={}
 local teamSource='unknown'
 hub.Decisions={}
@@ -345,17 +371,20 @@ local function refreshTeamCache()
     local people=Players:GetPlayers()
     metadata={}
     for _,player in ipairs(people) do metadata[player]=playerSnapshot(player) end
-    currentMode=modeOf(metadata[LP]) or modeOf(snapshot(Workspace)) or 'unknown'
+    currentMode=sniperContext(LP) and 'teams' or modeOf(metadata[LP]) or modeOf(snapshot(Workspace)) or 'unknown'
     local resolved='unknown'
     for _,p in ipairs(people) do
         if p~=LP then
             local relation=hub.Relations[p.UserId]
+            local structural,structuralReason=sniperVerdict(p)
             local allowed,reason=false,'equipe desconhecida'
             if spectator(LP) or spectator(p) then reason='lobby / espectador'
+            elseif structural==false then reason=structuralReason
             elseif relation=='ally' then reason='aliado manual'
             elseif relation=='enemy' then allowed=true; reason='inimigo manual'
             elseif settings.IgnoreFriends and hub.Friends[p.UserId]~='other' then
                 reason=hub.Friends[p.UserId]=='friend' and 'amigo (Auto)' or 'amizade pendente / indisponivel'
+            elseif structural==true then allowed=true; reason=structuralReason
             else
                 allowed,reason=matchVerdict(p)
                 if allowed then
@@ -365,7 +394,7 @@ local function refreshTeamCache()
                 end
             end
             verdicts[p]=allowed
-            hub.Decisions[p.UserId]={allowed=allowed,reason=reason}
+            hub.Decisions[p.UserId]={allowed=allowed,reason=reason,structural=structural~=nil}
             if allowed then resolved=reason end
         end
     end
@@ -379,6 +408,7 @@ function hub.GetDiagnostics()
         'Universe: '..tostring(game.GameId)..' | Place: '..tostring(game.PlaceId),
         'Sniper Duels: '..tostring(game.GameId==7264587281)..' | Modo detectado: '..currentMode,
         'Aim: '..tostring(settings.Aim)..' | ESP: '..tostring(settings.ESP)..' | FOV travado: '..tostring(settings.FOVLocked),
+        'FFA manual: '..tostring(settings.ForceFFA)..' | Jogadores disponiveis: '..tostring(#Players:GetPlayers()),
         'Campo equipe: '..(settings.TeamMarker~='' and settings.TeamMarker or 'Auto'),
         'Campo partida: '..(settings.MatchMarker~='' and settings.MatchMarker or 'Auto')}
     local function append(player,record)
@@ -390,6 +420,8 @@ function hub.GetDiagnostics()
         table.insert(lines,'Team='..tostring(player.Team)..' Neutral='..tostring(player.Neutral)
             ..' Character='..(char and char:GetFullName() or 'ausente')
             ..' Health='..tostring(human and human.Health))
+        local context=sniperContext(player)
+        if context then table.insert(lines,'Estrutura: partida='..context.id..' equipe='..context.side) end
         if hub.DescribePlayer then table.insert(lines,hub.DescribePlayer(player)) end
         local keys={}
         for key in pairs(record.raw) do
@@ -404,14 +436,39 @@ function hub.GetDiagnostics()
             table.insert(lines,record.sources[key]..' = '..tostring(value):sub(1,100))
         end
     end
+    local context=sniperContext(LP)
+    if context then
+        table.insert(lines,'\nModelos da partida atual (nao implica elegibilidade):')
+        local shown=0
+        for _,side in ipairs(context.match:GetChildren()) do
+            if side.Name=='A' or side.Name=='B' then
+                for _,model in ipairs(side:GetChildren()) do
+                    if model:IsA('Model') and shown<24 then
+                        shown=shown+1
+                        local owner=Players:GetPlayerFromCharacter(model)
+                        local human=model:FindFirstChildOfClass('Humanoid')
+                        table.insert(lines,side.Name..'/'..model.Name..' | Player='
+                            ..(owner and owner.Name or 'sem Character associado')
+                            ..' | Health='..tostring(human and human.Health))
+                    end
+                end
+            end
+        end
+        if shown>=24 then table.insert(lines,'Lista de modelos limitada a 24 entradas.') end
+    end
     for _,player in ipairs(Players:GetPlayers()) do append(player,metadata[player]) end
     return table.concat(lines,'\n')
 end
 
 local function enemy(player)
-    return player ~= LP
-        and player.Parent == Players
-        and verdicts[player] == true
+    if player==LP or player.Parent~=Players or verdicts[player]~=true then return false end
+    -- Recheck the short ancestry chain live, so a side/round change cannot
+    -- keep a stale target until the next metadata-cache refresh.
+    local structural=sniperVerdict(player)
+    if structural==false then return false end
+    local decision=hub.Decisions[player.UserId]
+    if decision and decision.structural and structural~=true then return false end
+    return true
 end
 local deadCharacters=setmetatable({}, {__mode='k'})
 local function livingCharacter(player)
@@ -1011,7 +1068,7 @@ do
 
     local playersPage = page('players')
     intro(playersPage,'Jogadores e equipes','Toque no estado: Auto > Inimigo > Aliado.')
-    ui.ffa = toggle(playersPage,'Forcar modo FFA','Use quando a partida nao tiver equipes.',settings.ForceFFA,function(value)
+    ui.ffa = toggle(playersPage,'Forcar modo FFA','Nao substitui equipes confirmadas do Sniper Duels.',settings.ForceFFA,function(value)
         settings.ForceFFA=value
         refreshTeamCache()
         clearTarget()

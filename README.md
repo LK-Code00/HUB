@@ -32,7 +32,9 @@ Enquanto a posicao estiver travada, arraste, sliders X/Y e centralizacao ficam d
 
 ## Sniper Duels: equipes, rankeds e diagnostico
 
-A investigacao e as fontes estao em [RESEARCH.md](RESEARCH.md). A deteccao prioriza marcadores de rodada, preserva equipes com ID zero, consulta containers de dados e trata revive no mesmo personagem. Nao ha garantia de todos os modos sem teste no jogo; a estrutura interna das rankeds nao e publica.
+A investigacao e as fontes estao em [RESEARCH.md](RESEARCH.md). Um diagnostico recebido mostrou `Workspace.Characters.{partida}.B.<personagem>` para o jogador local e seu colega, enquanto o filtro dizia `FFA manual`. O Hub agora reconhece a estrutura de duas equipes A/B nesse universo: mesma equipe e outra partida sao excluidas antes de FFA e de classificacoes manuais. A verificacao de ancestralidade e repetida durante o acompanhamento para detectar trocas de equipe.
+
+O adaptador e limitado a `Workspace.Characters.<GUID>.A/B.<Player.Character>`; nao adivinha lados em outros formatos. O lado B foi observado no diagnostico; a contraparte A e validada em testes simulados e ainda precisa ser conferida na partida real. O diagnostico lista tambem os modelos A/B da partida atual, ate 24 entradas, informando quando nao estao associados a um `Player.Character`. Essa listagem nao ativa mira em modelos desconhecidos. A deteccao prioriza marcadores de rodada, preserva equipes com ID zero, consulta containers de dados e trata revive no mesmo personagem. Nao ha garantia de todos os modos sem teste no jogo; a estrutura interna das rankeds nao e publica.
 
 Em **Jogadores**, use **Gerar diagnostico** durante a partida. O relatorio mostra por que cada jogador foi incluido/bloqueado e as condicoes do personagem. **Copiar** usa o clipboard do ambiente, quando disponivel; caso contrario, imprime no console. O relatorio e local e nao e enviado automaticamente.
 
@@ -40,7 +42,7 @@ Os campos opcionais **Equipe** e **Partida** aceitam nomes de atributos/ValueBas
 
 ## Amigos e classificacao manual
 
-Na aba **Jogadores**, a classificacao explicita tem prioridade: **Inimigo** permite selecionar inclusive amigos, mesmo se a consulta de amizade estiver pendente; **Aliado** exclui o jogador. Em **Auto**, os filtros de amizade, equipe e partida voltam a ser aplicados. A escolha afeta a selecao da mira e o ESP, e continua sendo salva por jogo.
+Na aba **Jogadores**, a classificacao explicita tem prioridade sobre o filtro de amizade: **Inimigo** permite selecionar inclusive amigos, mesmo se a consulta de amizade estiver pendente; **Aliado** exclui o jogador. Em **Auto**, os filtros de amizade, equipe e partida voltam a ser aplicados. A escolha afeta a selecao da mira e o ESP, e continua sendo salva por jogo. No Sniper Duels, a estrutura confirmada de equipes impede selecionar um colega ou alguem de outra partida, mesmo com uma classificacao manual antiga de Inimigo.
 
 ## Graficos e shaders
 
@@ -98,7 +100,7 @@ luau-compile HUB.lua > /tmp/hub-bytecode.txt
 python3 tests/run.py /caminho/para/luau
 ```
 
-Os 49 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
+Os 58 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
 
 O teste usa uma simulacao pequena das APIs do Roblox. Ele verifica a logica e a ligacao dos eventos, mas nao substitui renderizacao, encaminhamento real de toque, fontes ou comportamento de camera dentro do Roblox.
 
