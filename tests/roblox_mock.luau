@@ -82,6 +82,16 @@ objectMeta.__newindex=function(self,key,value)
         if value then table.insert(value._children,self) end
     end
     self._props[key]=value
+    if key=='Parent' and value then
+        value.ChildAdded:Fire(self)
+        local ancestor=value
+        local descendants=self:GetDescendants()
+        while ancestor and ancestor.DescendantAdded do
+            ancestor.DescendantAdded:Fire(self)
+            for _,child in ipairs(descendants) do ancestor.DescendantAdded:Fire(child) end
+            ancestor=ancestor.Parent
+        end
+    end
 end
 local Instance={}
 function Instance.new(class)

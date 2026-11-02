@@ -184,6 +184,14 @@ local function bind(signal, callback)
     table.insert(hub.Connections, connection)
     return connection
 end
+local function unbind(connection)
+    connection:Disconnect()
+    local index=table.find(hub.Connections,connection)
+    if index then
+        hub.Connections[index]=hub.Connections[#hub.Connections]
+        hub.Connections[#hub.Connections]=nil
+    end
+end
 local function create(class, props, parent)
     local obj = Instance.new(class)
     for property, value in pairs(props) do obj[property] = value end
@@ -204,16 +212,17 @@ local function registerFriend(player)
     if player == LP then return end
     local id = player.UserId
     if hub.Friends[id] ~= nil then return end
-    if not settings.IgnoreFriends then hub.Friends[id]='other'; return end
     hub.Friends[id]='pending'
-    task.spawn(function()
-        local ok, value = pcall(function()
-            return LP:IsFriendsWithAsync(id)
-        end)
-        if hub.Running and player.Parent==Players then
-            hub.Friends[id] = ok and (value and 'friend' or 'other') or 'unknown'
-        end
-    end)
+    local attempts=0
+    local function query()
+        if not hub.Running or env.ZyonHub~=hub or player.Parent~=Players then return end
+        attempts=attempts+1
+        local ok,value=pcall(function() return LP:IsFriendsWithAsync(id) end)
+        if not hub.Running or env.ZyonHub~=hub or player.Parent~=Players then return end
+        hub.Friends[id]=ok and (value and 'friend' or 'other') or 'unknown'
+        if not ok and attempts<3 then task.delay(2^attempts,query) end
+    end
+    task.spawn(query)
 end
 -- Generic replicated-state adapter. These are candidate keys, not a claimed
 -- private Sniper Duels schema; confirmed sources/limitations are in RESEARCH.md.
@@ -358,7 +367,10 @@ end
 -- separate facts. Queue preferences (LastModesSelected) are never mode evidence.
 local modeMatch,detectedMatchMode,matchModeOverride
 local function syncMatchMode(context)
-    if not context then return end
+    if not context then
+        modeMatch,detectedMatchMode,matchModeOverride=nil,nil,nil
+        return
+    end
     local detected=modeOf(snapshot(context.match)) or modeOf(metadata[LP])
         or modeOf(snapshot(Workspace)) or 'unknown'
     if modeMatch~=context.match or (detectedMatchMode and detectedMatchMode~=detected) then
@@ -407,9 +419,11 @@ local function refreshTeamCache()
         if p~=LP then
             local relation=hub.Relations[p.UserId]
             local structural,structuralReason=sniperVerdict(p)
+            local sameMatch,matchReason=matchVerdict(p)
             local allowed,reason=false,'equipe desconhecida'
             if spectator(LP) or spectator(p) then reason='lobby / espectador'
             elseif structural==false then reason=structuralReason
+            elseif structural==nil and not sameMatch then reason=matchReason
             elseif relation=='ally' then reason='aliado manual'
             elseif relation=='enemy' then allowed=true; reason='inimigo manual'
             elseif settings.IgnoreFriends and hub.Friends[p.UserId]~='other' then
@@ -586,7 +600,7 @@ local function aimPosition(part)
     if part.Name=='HumanoidRootPart' then return part.Position+Vector3.new(0,1.1,0) end
     return part.Position
 end
-local function targetInfo(camera,part)
+local function targetInfo(camera,part,skipVisibility)
     if not part or not part.Parent or not part:IsA('BasePart') then return nil end
     local char=part.Parent
     local player=Players:GetPlayerFromCharacter(char)
@@ -600,7 +614,8 @@ local function targetInfo(camera,part)
     local delta=Vector2.new(point.X,point.Y)-center
     local distance=delta.X*delta.X+delta.Y*delta.Y
     local radius=math.min(camera.ViewportSize.X,camera.ViewportSize.Y)*settings.FOV
-    if distance>radius*radius or not visible(camera,part,position) then return nil end
+    if distance>radius*radius then return nil end
+    if not skipVisibility and not visible(camera,part,position) then return nil end
     return position,point,distance
 end
 function hub.DescribePlayer(player)
@@ -628,16 +643,21 @@ local function findTarget()
     local camera=Workspace.CurrentCamera
     if not camera then return nil end
     -- Keep a target only while every eligibility check still passes.
-    if hub.Target and targetInfo(camera,hub.Target) then return hub.Target end
-    local closest,best=nil,math.huge
+    if hub.Target then
+        local position,point,distance=targetInfo(camera,hub.Target)
+        if position then return hub.Target,position,point,distance end
+    end
+    local closest,best,bestPosition,bestPoint=nil,math.huge,nil,nil
     for _,player in ipairs(Players:GetPlayers()) do
         local part=aimPart(player)
         if part then
-            local position,_,distance=targetInfo(camera,part)
-            if position and distance<best then best=distance; closest=part end
+            local position,point,distance=targetInfo(camera,part,true)
+            if position and distance<best and visible(camera,part,position) then
+                best=distance; closest=part; bestPosition=position; bestPoint=point
+            end
         end
     end
-    return closest
+    return closest,bestPosition,bestPoint,best
 end
 
 -- Watch death and character replacement independently of the acquisition timer.
@@ -646,7 +666,7 @@ local function watchPlayer(player)
     local record={connections={},characterConnections={}}
     playerWatches[player]=record
     local function disconnect(list)
-        for _,connection in ipairs(list) do connection:Disconnect() end
+        for _,connection in ipairs(list) do unbind(connection) end
         table.clear(list)
     end
     local function release(character)
@@ -756,10 +776,13 @@ do
     local Lighting=game:GetService('Lighting')
     local originals=setmetatable({}, {__mode='k'})
     local owned={}
+    local candidates=setmetatable({}, {__mode='k'})
     local function override(object,property,value)
         local entry=originals[object]
         if not entry then entry={}; originals[object]=entry end
-        if not entry[property] then entry[property]={before=object[property]} end
+        if not entry[property] or object[property]~=entry[property].last then
+            entry[property]={before=object[property]}
+        end
         entry[property].last=value
         object[property]=value
     end
@@ -790,13 +813,22 @@ do
         table.clear(owned)
     end
     local function effect(class,props)
-        local object=create(class,props,Lighting)
+        for object in pairs(owned) do
+            if object:IsA(class) and object.Parent==Lighting then
+                for property,value in pairs(props) do object[property]=value end
+                return object
+            elseif object.Parent~=Lighting then
+                object:Destroy(); owned[object]=nil
+            end
+        end
+        local object=Instance.new(class)
         owned[object]=true
+        for property,value in pairs(props) do object[property]=value end
+        object.Parent=Lighting
         return object
     end
     local function shaders()
-        clearShaders()
-        if settings.ShaderPreset==0 or settings.LowGraphics then return end
+        if settings.ShaderPreset==0 or settings.LowGraphics then clearShaders(); return end
         local amount=settings.ShaderStrength
         local r,g,b=255,255,255
         if settings.ShaderPreset==2 then g,b=244,225
@@ -809,15 +841,22 @@ do
     applyGraphics=function()
         if settings.LowGraphics then override(Lighting,'GlobalShadows',false)
         else restore(Lighting) end
-        for _,root in ipairs({Workspace,Lighting}) do
-            for _,object in ipairs(root:GetDescendants()) do adjust(object) end
+        for object in pairs(candidates) do
+            if object:IsDescendantOf(Workspace) or object:IsDescendantOf(Lighting) then adjust(object)
+            else restore(object); candidates[object]=nil end
         end
         shaders()
     end
+    local function discover(object)
+        if owned[object] or not (particle(object) or object:IsA('PostEffect')) then return end
+        candidates[object]=true
+        adjust(object)
+    end
     for _,root in ipairs({Workspace,Lighting}) do
         bind(root.DescendantAdded,function(object)
-            if hub.Running then adjust(object) end
+            if hub.Running then discover(object) end
         end)
+        for _,object in ipairs(root:GetDescendants()) do discover(object) end
     end
     hub.RestoreGraphics=function()
         clearShaders()
@@ -1068,6 +1107,18 @@ do
     slider(aimPage,'SENSIBILIDADE',1,20,settings.Smoothness,
         function(value) return string.format('%.0f / 20',value) end,
         function(value) settings.Smoothness=value end)
+    slider(aimPage,'DISTANCIA MAXIMA',1,10000,settings.MaxDistance,
+        function(value) return string.format('%d studs',value) end,
+        function(value) settings.MaxDistance=value; clearTarget() end)
+    slider(aimPage,'INTERVALO DE BUSCA',30,2000,settings.TargetInterval*1000,
+        function(value) return string.format('%d ms',value) end,
+        function(value) settings.TargetInterval=value/1000 end)
+    slider(aimPage,'INTERVALO DO ESP',50,5000,settings.ESPInterval*1000,
+        function(value) return string.format('%d ms',value) end,
+        function(value) settings.ESPInterval=value/1000 end)
+    slider(aimPage,'PAUSA APOS CONTROLE MANUAL',100,2000,settings.ManualPause*1000,
+        function(value) return string.format('%d ms',value) end,
+        function(value) settings.ManualPause=value/1000 end)
     local statusCard = card(aimPage,78)
     accentLabel(statusCard,'STATUS DA PARTIDA',14,9,260,20,10,color.purple,true)
     local count = text(statusCard,'Buscando jogadores...',14,34,W-56,32,11,color.muted)
@@ -1114,6 +1165,20 @@ do
 
     local playersPage = page('players')
     intro(playersPage,'Jogadores e equipes','Toque no estado: Auto > Inimigo > Aliado.')
+    local function filterToggle(title,description,key)
+        local control
+        control=toggle(playersPage,title,description,settings[key],function(value)
+            settings[key]=value
+            control.set(value)
+            refreshTeamCache()
+            clearTarget()
+            for player in pairs(hub.Highlights) do
+                if not enemy(player) then clearHighlight(player) end
+            end
+        end)
+    end
+    filterToggle('Ignorar amigos','Em Auto, exclui amigos da mira e do ESP.','IgnoreFriends')
+    filterToggle('Ignorar equipe','Filtro generico; duelos usam a estrutura da partida.','IgnoreTeam')
     local modeCard=card(playersPage,116)
     text(modeCard,'MODO DESTA PARTIDA',14,8,300,22,12,color.white,true)
     local modeStatus=text(modeCard,'Auto: aguardando dados da partida.',14,34,310,27,10,color.muted)
@@ -1498,7 +1563,7 @@ do
     end
     local viewportConnection
     local function watchCamera()
-        if viewportConnection then viewportConnection:Disconnect() end
+        if viewportConnection then unbind(viewportConnection); viewportConnection=nil end
         local camera=Workspace.CurrentCamera
         if camera then viewportConnection=bind(camera:GetPropertyChangedSignal('ViewportSize'),resize) end
         resize()
@@ -1575,14 +1640,15 @@ RunService:BindToRenderStep(renderKey,Enum.RenderPriority.Camera.Value+1,functio
         return
     end
     elapsed=elapsed+dt
+    local goal,point
     if elapsed>=settings.TargetInterval then
         elapsed=0
-        hub.Target=findTarget()
+        hub.Target,goal,point=findTarget()
     end
     local part=hub.Target
     if not part then return end
     -- Never steer using cached life, visibility, range, or FOV checks.
-    local goal,point=targetInfo(camera,part)
+    if not goal then goal,point=targetInfo(camera,part) end
     if not goal then hub.Target=nil; return end
     local origin=camera.CFrame.Position
     if (goal-origin).Magnitude<0.01 then return end
@@ -1598,11 +1664,13 @@ bind(Players.PlayerRemoving,function(player)
     clearHighlight(player)
     local record=playerWatches[player]
     if record then
-        for _,connection in ipairs(record.connections) do connection:Disconnect() end
-        for _,connection in ipairs(record.characterConnections) do connection:Disconnect() end
+        for _,connection in ipairs(record.connections) do unbind(connection) end
+        for _,connection in ipairs(record.characterConnections) do unbind(connection) end
         playerWatches[player]=nil
     end
     verdicts[player]=nil
+    metadata[player]=nil
+    hub.Decisions[player.UserId]=nil
     hub.Friends[player.UserId]=nil
     if hub.Target and player.Character and
         hub.Target:IsDescendantOf(player.Character) then
@@ -1611,23 +1679,26 @@ bind(Players.PlayerRemoving,function(player)
 end)
 for _,player in ipairs(Players:GetPlayers()) do registerFriend(player); watchPlayer(player) end
 
+local lastTeamRefresh,lastESPRefresh=-math.huge,-math.huge
+local function updateBackground(now)
+    if not hub.Running then return end
+    if now-lastTeamRefresh>=0.9 then
+        refreshTeamCache()
+        lastTeamRefresh=now
+    end
+    if now-lastESPRefresh<settings.ESPInterval then return end
+    lastESPRefresh=now
+    local n=0
+    for _,player in ipairs(Players:GetPlayers()) do
+        if updateHighlight(player) then n=n+1 end
+    end
+    hub.UpdateStatus(n,teamSource)
+end
 task.spawn(function()
-    local lastTeamRefresh=-math.huge
     while hub.Running do
-        -- ESP updates more often than custom-team discovery.
-        if os.clock()-lastTeamRefresh>=0.9 then
-            refreshTeamCache()
-            lastTeamRefresh=os.clock()
-        end
-        local n=0
-        for _,player in ipairs(Players:GetPlayers()) do
-            if not hub.Running then break end
-            if updateHighlight(player) then n=n+1 end
-        end
-        if hub.Running then
-            hub.UpdateStatus(n,teamSource)
-        end
-        task.wait(settings.ESPInterval)
+        updateBackground(os.clock())
+        -- A slow ESP interval must not delay classification or control changes.
+        task.wait(math.min(settings.ESPInterval,0.1))
     end
 end)
 
@@ -1639,6 +1710,11 @@ function hub.Stop()
     for _,connection in ipairs(hub.Connections) do
         connection:Disconnect()
     end
+    table.clear(hub.Connections)
+    table.clear(playerWatches)
+    table.clear(metadata)
+    table.clear(verdicts)
+    table.clear(hub.Decisions)
     for player in pairs(hub.Highlights) do clearHighlight(player) end
     hub.RestoreGraphics()
     hub.Screen:Destroy()

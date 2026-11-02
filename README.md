@@ -4,9 +4,9 @@ Hub em Luau para o cliente Roblox, em um unico arquivo (`HUB.lua`), com suporte 
 
 ## Interface
 
-- **Geral:** ESP, aimbot, prioridade da camera manual, sensibilidade e status da partida.
+- **Geral:** ESP, aimbot, prioridade da camera manual, sensibilidade, distancia maxima, intervalos de busca/ESP, pausa manual e status da partida.
 - **FOV:** trava de posicao, visibilidade do circulo, raio, coordenadas X/Y e centralizacao.
-- **Jogadores:** modo FFA e classificacao manual Auto → Inimigo → Aliado.
+- **Jogadores:** filtros de amigos/equipe, modo FFA e classificacao manual Auto → Inimigo → Aliado.
 - **Visual:** quatro cores de destaque, transparencias, estado do salvamento e botao **Salvar agora**.
 - **Graficos:** modo leve, reducao de particulas, presets de efeitos e intensidade.
 
@@ -110,7 +110,7 @@ luau-compile HUB.lua > /tmp/hub-bytecode.txt
 python3 tests/run.py /caminho/para/luau
 ```
 
-Os 67 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
+Os 78 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
 
 O teste usa uma simulacao pequena das APIs do Roblox. Ele verifica a logica e a ligacao dos eventos, mas nao substitui renderizacao, encaminhamento real de toque, fontes ou comportamento de camera dentro do Roblox.
 
@@ -128,3 +128,22 @@ O teste usa uma simulacao pequena das APIs do Roblox. Ele verifica a logica e a 
 
 - Testar a classificacao manual de um amigo como Inimigo, depois voltar para Auto.
 - Alternar modo leve, particulas e presets; fechar o Hub e conferir a restauracao da cena.
+
+## Revisao de desempenho e estabilidade
+
+Veja [ANALISE.md](ANALISE.md) para os problemas identificados, alteracoes e limites de validacao.
+
+Os controles adicionais em **Geral** usam as mesmas preferencias persistentes do Hub:
+
+| Controle | Faixa | Padrao |
+| --- | --- | --- |
+| Distancia maxima da mira | 1–10000 studs | 350 |
+| Intervalo de busca de alvo | 30–2000 ms | 120 ms |
+| Intervalo do ESP | 50–5000 ms | 300 ms |
+| Pausa apos controle manual | 100–2000 ms | 450 ms |
+
+O intervalo de busca afeta a aquisicao; a validacao do alvo acompanhado continua por quadro. Intervalos menores aumentam o trabalho de CPU; comece pelos padroes. O filtro de equipes generico nao substitui o seletor de modo da partida do Sniper Duels. A distancia maxima e aplicada a mira, nao ao ESP.
+
+Consultas de amizade ocorrem mesmo com o filtro desligado, para que liga-lo use a classificacao real. Falhas recebem ate tres tentativas, com esperas de 2 e 4 segundos. Apos falha definitiva, Auto permanece bloqueado por amizade desconhecida; a classificacao manual continua disponivel.
+
+A descoberta de equipes tem temporizador independente do ESP, com periodo nominal de 0,9 segundo. Os pos-efeitos sao cadastrados na inicializacao e por eventos de novos objetos; alternar ajustes nao percorre novamente toda a cena. Os efeitos do Hub sao reutilizados ao mover o slider de intensidade.
