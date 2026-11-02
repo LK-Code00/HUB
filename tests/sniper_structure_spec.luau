@@ -15,13 +15,14 @@ local function prepareStructure(side)
     lp.Character.Parent=bSide
     targetPlayer.Character.Parent=side
     settings.ForceFFA=true
+    matchOne.GameModeAttribute='2v2'
 end
 test('reported same-B teammate is excluded from both aim and ESP with forced FFA',function()
     prepareStructure(bSide)
     assert(selected()==nil)
     assert(not api.updateHighlight(targetPlayer))
     assert(hub.Decisions[targetPlayer.UserId].reason=='Sniper Duels: mesma equipe B')
-    assert(hub.GetDiagnostics():find('equipe=B') and hub.GetDiagnostics():find('FFA manual: true'))
+    assert(hub.GetDiagnostics():find('grupo=B') and hub.GetDiagnostics():find('FFA manual: true'))
 end)
 test('opposite side in the same match is eligible even with neutral Roblox teams',function()
     prepareStructure(aSide)
@@ -91,4 +92,4 @@ test('adapter is scoped to this universe and does not infer teams from queue pre
     hub.Stop()
     game.GameId=42
 end)
-print(string.format('%d behavioral checks passed',passed))
+

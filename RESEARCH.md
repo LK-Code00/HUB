@@ -51,7 +51,7 @@ Os nomes candidatos, como MatchTeam ou RankedMatchId, sao heuristicas opcionais,
 
 Compilacao Luau e **58 testes de comportamento** validam os cenarios simulados. Nao houve execucao no cliente Roblox nem validacao em partidas reais de Sniper Duels.
 
-## Atualizacao com diagnostico de uma partida real
+## Historico: primeiro diagnostico de uma partida real (regra de grupos revisada abaixo)
 
 O relato seguinte confirmou um disparo indevido em colega. O diagnostico mostrou o jogador local e outro jogador em `Workspace.Characters.{mesmo-guid}.B.<nome>`, ambos com `Team=nil` e `Neutral=true`. A decisao do colega era **INCLUIDO: FFA manual**. `LastModesSelected = 1v1,2v2` registra preferencias de fila; nao identifica equipe nem modo atual.
 
@@ -66,3 +66,15 @@ A causa demonstrada e a combinacao de FFA manual com a ausencia de leitura da hi
 A pasta **B** e sua correspondencia com colegas foram observadas. A estrutura simetrica **A** como lado oposto e uma inferencia limitada, coberta por testes sinteticos; ainda nao apareceu em um diagnostico de adversario enviado. O relatorio recebido continha apenas dois Players. O diagnostico agora enumera os modelos A/B da partida atual e sua associacao com Players para investigar adversarios ausentes, sem transforma-los automaticamente em alvos.
 
 Nove cenarios adicionais cobrem a reproducao com FFA ligado, ESP e mira, adversario A simulado, outra partida, estrutura incompleta, relacoes antigas, amizade, troca de equipe, perda de estrutura, escopo por universo e modelos sem Player associado. A compilacao e os **58 testes** passaram. A alteracao publicada ainda precisa de verificacao na ranked real.
+
+## Correcao apos diagnostico real de FFA
+
+O diagnostico seguinte foi identificado como FFA e mostrou cinco participantes vivos no mesmo grupo **A**, todos com `Player.Character` associado. O sexto personagem estava em `ReplicatedStorage._DEAD_CHARACTERS`, com vida 25 e estado None. A regra anterior que tratava A/B como prova de equipes estava errada: a mesma estrutura e usada para organizar participantes de FFA. Essa regra foi substituida.
+
+`LastModesSelected` variava entre `FFA_Standard,_LTM`, `_LTM` e listas contendo 2v2/3v3/4v4/12v12/FFA. Logo, nao e uma fonte valida do modo atual. Nem a quantidade de jogadores nem a ausencia de ocupantes em B comprovam FFA; uma equipe pode estar ausente durante carregamento ou apos eliminacao.
+
+O Hub separa agora identidade da partida de modo de combate. Auto consulta campos atuais de modo, incluindo a pasta da partida; reconhecer `FFA_Standard` nesses campos e suportado, mas **o nome de um campo de modo atual do Sniper Duels ainda nao foi confirmado pelo diagnostico**. Quando nao existe esse sinal, **Jogadores → Modo desta partida → FFA / Equipes** resolve explicitamente a ambiguidade. Essa escolha nao persiste fora da instancia da partida, nao e salva em disco e nao e inferida das preferencias da fila.
+
+Em FFA confirmado, participantes vivos da mesma partida podem ser adversarios mesmo no mesmo grupo A. Em Equipes, o grupo local continua excluido. Partidas diferentes, personagens em armazenamento de mortos, aliados manuais e demais filtros continuam bloqueados. Um adversario elegivel para ESP nao e necessariamente elegivel para a mira: no diagnostico recebido, todos os adversarios estavam sem linha de visao, e o unico adversario na tela estava fora do FOV.
+
+Foram acrescentados nove testes para FFA com grupo unico, selecao via interface, modo atual FFA_Standard, escopo por partida, mudanca para equipes, limpeza de alvos/ESP, filtros e nao persistencia da escolha. **Compilacao Luau e 67 testes simulados passaram**; a atualizacao ainda precisa de conferencia no cliente Roblox.

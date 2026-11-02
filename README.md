@@ -32,17 +32,27 @@ Enquanto a posicao estiver travada, arraste, sliders X/Y e centralizacao ficam d
 
 ## Sniper Duels: equipes, rankeds e diagnostico
 
-A investigacao e as fontes estao em [RESEARCH.md](RESEARCH.md). Um diagnostico recebido mostrou `Workspace.Characters.{partida}.B.<personagem>` para o jogador local e seu colega, enquanto o filtro dizia `FFA manual`. O Hub agora reconhece a estrutura de duas equipes A/B nesse universo: mesma equipe e outra partida sao excluidas antes de FFA e de classificacoes manuais. A verificacao de ancestralidade e repetida durante o acompanhamento para detectar trocas de equipe.
+A investigacao e as fontes estao em [RESEARCH.md](RESEARCH.md). Os diagnosticos reais mostraram dois usos de `Workspace.Characters.<GUID>.A/B.<Player.Character>`: pastas de aliados nos duelos e todos os adversarios na mesma pasta A no FFA. Portanto, **a pasta identifica a partida/grupo, mas nao prova o modo**.
 
-O adaptador e limitado a `Workspace.Characters.<GUID>.A/B.<Player.Character>`; nao adivinha lados em outros formatos. O lado B foi observado no diagnostico; a contraparte A e validada em testes simulados e ainda precisa ser conferida na partida real. O diagnostico lista tambem os modelos A/B da partida atual, ate 24 entradas, informando quando nao estao associados a um `Player.Character`. Essa listagem nao ativa mira em modelos desconhecidos. A deteccao prioriza marcadores de rodada, preserva equipes com ID zero, consulta containers de dados e trata revive no mesmo personagem. Nao ha garantia de todos os modos sem teste no jogo; a estrutura interna das rankeds nao e publica.
+Em **Jogadores → Modo desta partida**, escolha:
+
+- **AUTO:** usa campos atuais de modo replicados na pasta da partida, no jogador/personagem ou no Workspace. Reconhece `FFA_Standard` quando esse valor aparece num campo de modo atual. `LastModesSelected` nao e usado: registra preferencias de fila, nao a partida atual.
+- **EQUIPES:** jogadores no mesmo grupo A/B sao aliados; grupos diferentes na mesma partida sao adversarios.
+- **FFA:** jogadores vivos da mesma partida sao candidatos, inclusive no mesmo grupo A. Filtros de amizade/aliado, visibilidade e FOV continuam funcionando.
+
+Se Auto mostrar modo desconhecido, selecione explicitamente FFA ou Equipes. Sem dados de modo, o Hub nao converte um grupo unico automaticamente em FFA. O antigo controle **Forcar modo FFA** continua reservado ao classificador generico, fora desta estrutura do Sniper Duels.
+
+A selecao de modo e **somente para a partida atual**, identificada pela instancia da pasta; nao e gravada no perfil nem transportada para outro jogo/partida ou nova execucao. Se o modo atual replicado mudar dentro da mesma pasta, a escolha manual e descartada na atualizacao dos dados. As demais configuracoes continuam salvas normalmente. Isso impede que uma escolha de FFA antiga volte a incluir colegas num duelo posterior.
+
+O diagnostico lista tambem os modelos A/B da partida atual, ate 24 entradas, informando quando nao estao associados a um `Player.Character`. Modelos fora do Workspace, como os de `_DEAD_CHARACTERS`, nao sao elegiveis, mesmo se a vida exibida for positiva.
 
 Em **Jogadores**, use **Gerar diagnostico** durante a partida. O relatorio mostra por que cada jogador foi incluido/bloqueado e as condicoes do personagem. **Copiar** usa o clipboard do ambiente, quando disponivel; caso contrario, imprime no console. O relatorio e local e nao e enviado automaticamente.
 
-Os campos opcionais **Equipe** e **Partida** aceitam nomes de atributos/ValueBases observados no diagnostico (ate 48 letras, numeros ou `_`). Deixe vazio para Auto. Esses ajustes ficam salvos. Nao use `Forcar modo FFA` numa partida com equipes para contornar um campo desconhecido: classifique os jogadores manualmente enquanto verifica os dados.
+Os campos opcionais **Equipe** e **Partida** aceitam nomes de atributos/ValueBases observados no diagnostico (ate 48 letras, numeros ou `_`). Deixe vazio para Auto. Esses campos ficam salvos. Use o seletor **Modo desta partida** para confirmar FFA ou Equipes quando faltarem dados atuais do modo.
 
 ## Amigos e classificacao manual
 
-Na aba **Jogadores**, a classificacao explicita tem prioridade sobre o filtro de amizade: **Inimigo** permite selecionar inclusive amigos, mesmo se a consulta de amizade estiver pendente; **Aliado** exclui o jogador. Em **Auto**, os filtros de amizade, equipe e partida voltam a ser aplicados. A escolha afeta a selecao da mira e o ESP, e continua sendo salva por jogo. No Sniper Duels, a estrutura confirmada de equipes impede selecionar um colega ou alguem de outra partida, mesmo com uma classificacao manual antiga de Inimigo.
+Na aba **Jogadores**, a classificacao explicita tem prioridade sobre o filtro de amizade: **Inimigo** permite selecionar inclusive amigos, mesmo se a consulta de amizade estiver pendente; **Aliado** exclui o jogador. Em **Auto**, os filtros de amizade, equipe e partida voltam a ser aplicados. A escolha afeta a selecao da mira e o ESP, e continua sendo salva por jogo. No Sniper Duels, em modo Equipes, o grupo aliado e excluido mesmo com uma classificacao manual antiga de Inimigo. Em FFA, o mesmo grupo pode conter adversarios. Outros matches e personagens mortos continuam excluidos.
 
 ## Graficos e shaders
 
@@ -100,7 +110,7 @@ luau-compile HUB.lua > /tmp/hub-bytecode.txt
 python3 tests/run.py /caminho/para/luau
 ```
 
-Os 58 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
+Os 67 testes comportamentais cobrem os controles da interface e regressao de persistencia: restauracao sem cache de sessao, gravacao agrupada, falhas e novas tentativas, arquivo invalido, separacao por conta/jogo e ambiente sem arquivos. Tambem cobrem morte, corpo antigo, parede surgindo depois da selecao, FOV/distancia/tela, pausa manual por mouse/toque/controle e limite de frequencia das buscas. Os novos testes verificam a prioridade manual sobre amizades, graficos reversiveis, novos emissores, presets, intensidade e restauracao das preferencias graficas.
 
 O teste usa uma simulacao pequena das APIs do Roblox. Ele verifica a logica e a ligacao dos eventos, mas nao substitui renderizacao, encaminhamento real de toque, fontes ou comportamento de camera dentro do Roblox.
 

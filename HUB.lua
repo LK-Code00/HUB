@@ -308,7 +308,7 @@ local function modeOf(record)
         local value=record.values[keyName(key)]
         if value then
             local token=value:gsub('[%s_%-]','')
-            if token=='ffa' or token=='freeforall' then return 'ffa' end
+            if token=='ffa' or token=='freeforall' or value:match('^ffa[_%-]') then return 'ffa' end
             if token=='duel' or token=='duels' or token=='teams' or token=='tdm'
                 or token=='teamdeathmatch' or token:match('^%d+v%d+$') then return 'teams' end
             -- Ranked/casual labels describe queues, not team structure.
@@ -339,7 +339,7 @@ local function spectator(player)
 end
 -- Observed in a live Sniper Duels diagnostic:
 -- Workspace.Characters.{match-guid}.B.<Player.Character>.
--- A/B is a narrow two-side adapter; unknown layouts are not guessed.
+-- A/B identifies groups inside a match, not proof that the mode has teams.
 local function sniperContext(player)
     if game.GameId~=7264587281 then return nil end
     local char=player and player.Character
@@ -354,12 +354,40 @@ local function sniperContext(player)
     if not a or #a~=8 or #b~=4 or #c~=4 or #d~=4 or #e~=12 then return nil end
     return {match=match,side=side.Name,id=match.Name}
 end
+-- Folder A is also used for all FFA participants. Membership and mode are
+-- separate facts. Queue preferences (LastModesSelected) are never mode evidence.
+local modeMatch,detectedMatchMode,matchModeOverride
+local function syncMatchMode(context)
+    if not context then return end
+    local detected=modeOf(snapshot(context.match)) or modeOf(metadata[LP])
+        or modeOf(snapshot(Workspace)) or 'unknown'
+    if modeMatch~=context.match or (detectedMatchMode and detectedMatchMode~=detected) then
+        matchModeOverride=nil
+    end
+    modeMatch=context.match
+    detectedMatchMode=detected
+end
+local function effectiveMatchMode(context)
+    if not context or context.match~=modeMatch then return 'unknown','sem dados atuais' end
+    return matchModeOverride or detectedMatchMode or 'unknown',
+        matchModeOverride and 'selecao nesta partida' or 'dados atuais (nao preferencias de fila)'
+end
+function hub.GetMatchMode()
+    local context=sniperContext(LP)
+    local mode,source=effectiveMatchMode(context)
+    return mode,source,context and context.match==modeMatch and matchModeOverride or nil
+end
 local function sniperVerdict(other)
     local mine,theirs=sniperContext(LP),sniperContext(other)
     if not mine and not theirs then return nil end
     if not mine or not theirs then return false,'Sniper Duels: estrutura de partida incompleta' end
     if mine.match~=theirs.match then return false,'Sniper Duels: outra partida' end
-    if mine.side==theirs.side then return false,'Sniper Duels: mesma equipe '..mine.side end
+    local mode=effectiveMatchMode(mine)
+    if mode=='ffa' then return true,'Sniper Duels: FFA na mesma partida' end
+    if mine.side==theirs.side then
+        if mode=='unknown' then return false,'Sniper Duels: modo desconhecido; escolha FFA ou EQUIPES' end
+        return false,'Sniper Duels: mesma equipe '..mine.side
+    end
     return true,'Sniper Duels: equipe adversaria '..theirs.side
 end
 
@@ -371,7 +399,9 @@ local function refreshTeamCache()
     local people=Players:GetPlayers()
     metadata={}
     for _,player in ipairs(people) do metadata[player]=playerSnapshot(player) end
-    currentMode=sniperContext(LP) and 'teams' or modeOf(metadata[LP]) or modeOf(snapshot(Workspace)) or 'unknown'
+    local context=sniperContext(LP)
+    syncMatchMode(context)
+    currentMode=context and effectiveMatchMode(context) or modeOf(metadata[LP]) or modeOf(snapshot(Workspace)) or 'unknown'
     local resolved='unknown'
     for _,p in ipairs(people) do
         if p~=LP then
@@ -399,14 +429,30 @@ local function refreshTeamCache()
         end
     end
     teamSource=resolved
+    if hub.OnMatchModeChanged then hub.OnMatchModeChanged() end
+end
+function hub.SetMatchMode(mode)
+    if mode~='auto' and mode~='teams' and mode~='ffa' then return false end
+    local context=sniperContext(LP)
+    if not context then return false end
+    refreshTeamCache()
+    matchModeOverride=mode~='auto' and mode or nil
+    hub.Target=nil
+    refreshTeamCache()
+    for player,highlight in pairs(hub.Highlights) do
+        if not verdicts[player] then highlight:Destroy();hub.Highlights[player]=nil end
+    end
+    return true
 end
 
 -- An explicit snapshot, not a claim that public HTTP metadata reveals teams.
 function hub.GetDiagnostics()
     refreshTeamCache()
+    local _,modeSource,modeOverride=hub.GetMatchMode()
     local lines={'ZYON | Diagnostico da partida',
+        'Origem do modo: '..modeSource..' | Escolha local: '..(modeOverride or 'auto'),
         'Universe: '..tostring(game.GameId)..' | Place: '..tostring(game.PlaceId),
-        'Sniper Duels: '..tostring(game.GameId==7264587281)..' | Modo detectado: '..currentMode,
+        'Sniper Duels: '..tostring(game.GameId==7264587281)..' | Modo efetivo: '..currentMode,
         'Aim: '..tostring(settings.Aim)..' | ESP: '..tostring(settings.ESP)..' | FOV travado: '..tostring(settings.FOVLocked),
         'FFA manual: '..tostring(settings.ForceFFA)..' | Jogadores disponiveis: '..tostring(#Players:GetPlayers()),
         'Campo equipe: '..(settings.TeamMarker~='' and settings.TeamMarker or 'Auto'),
@@ -421,7 +467,7 @@ function hub.GetDiagnostics()
             ..' Character='..(char and char:GetFullName() or 'ausente')
             ..' Health='..tostring(human and human.Health))
         local context=sniperContext(player)
-        if context then table.insert(lines,'Estrutura: partida='..context.id..' equipe='..context.side) end
+        if context then table.insert(lines,'Estrutura: partida='..context.id..' grupo='..context.side) end
         if hub.DescribePlayer then table.insert(lines,hub.DescribePlayer(player)) end
         local keys={}
         for key in pairs(record.raw) do
@@ -1068,7 +1114,29 @@ do
 
     local playersPage = page('players')
     intro(playersPage,'Jogadores e equipes','Toque no estado: Auto > Inimigo > Aliado.')
-    ui.ffa = toggle(playersPage,'Forcar modo FFA','Nao substitui equipes confirmadas do Sniper Duels.',settings.ForceFFA,function(value)
+    local modeCard=card(playersPage,116)
+    text(modeCard,'MODO DESTA PARTIDA',14,8,300,22,12,color.white,true)
+    local modeStatus=text(modeCard,'Auto: aguardando dados da partida.',14,34,310,27,10,color.muted)
+    modeStatus.TextWrapped=true
+    local modeButtons={}
+    for index,entry in ipairs({{'auto','AUTO'},{'teams','EQUIPES'},{'ffa','FFA'}}) do
+        local btn=button(modeCard,entry[2],14+(index-1)*106,69,100,34)
+        modeButtons[entry[1]]=btn
+        bind(btn.Activated,function()
+            if not hub.SetMatchMode(entry[1]) then modeStatus.Text='Entre em uma partida para escolher o modo.' end
+        end)
+    end
+    hub.OnMatchModeChanged=function()
+        local mode,_,override=hub.GetMatchMode()
+        local choice=override or 'auto'
+        for key,btn in pairs(modeButtons) do
+            btn.TextColor3=key==choice and color.green or color.muted
+        end
+        modeStatus.Text=mode=='unknown' and 'Modo nao identificado. Selecione FFA ou EQUIPES.'
+            or ((mode=='ffa' and 'FFA' or 'Equipes')..(override and ' | Somente nesta partida.' or ' | Detectado pelos dados atuais.'))
+    end
+    hub.OnMatchModeChanged()
+    ui.ffa = toggle(playersPage,'Forcar modo FFA','Para outros formatos; aqui use Modo desta partida.',settings.ForceFFA,function(value)
         settings.ForceFFA=value
         refreshTeamCache()
         clearTarget()
